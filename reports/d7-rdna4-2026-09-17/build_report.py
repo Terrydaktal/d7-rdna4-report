@@ -234,6 +234,16 @@ def main():
     assert "{{" not in document, "unexpanded report field"
     (ROOT / "REPORT.md").write_text(document)
     summary = read("fixed-compiled-10k-summary.json")
+    cross_mode = read("historical-eager-to-compiled-m8.json")
+    assert cross_mode["status"] == "COMPARED_SAVED_EVIDENCE"
+    assert cross_mode["within_mode_m1_m8_exact"] == {"eager": 10000, "compiled": 10000}
+    assert cross_mode["decode"]["positions"] == 10000
+    assert cross_mode["prefill"]["positions"] == 23
+    assert cross_mode["prefill"]["full_logits_exact"] == 0
+    for k, counts in {"1": (9811, 9811), "10": (4845, 756), "20": (2227, 4)}.items():
+        assert (
+            cross_mode["decode"][k]["set_exact"], cross_mode["decode"][k]["ranked_exact"]
+        ) == counts
     assert summary["decode"]["positions"] == 10000
     assert summary["prefill"]["positions"] == 23
     for domain in ("decode", "prefill"):

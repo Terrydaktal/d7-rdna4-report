@@ -561,7 +561,7 @@ Upstream links and submission state are maintained in `submissions.md`.
 
 ## 7. Remaining discrepancies and limits
 
-**The completed 10K equality result is compiled M1 versus compiled M8 only.**
+**The final optimized build's completed 10K equality result is compiled M1 versus compiled M8.**
 It does not establish eager/compiled equivalence or choose an independently
 proved arithmetic reference. Corrected eager M1 versus corrected compiled M1
 has **98.11% top-1 agreement**
@@ -569,6 +569,22 @@ on the same 10K corpus. Top-10 set/order agreement is 48.45%/7.56%; top-20
 set/order agreement is 22.27%/0.04%. Every full-vector hash differs, including
 all 23 prefills. This separate discrepancy is unresolved and is not evidence
 that either execution is an independently proved mathematical reference.
+
+The earlier repaired eager pair also agreed internally at all 10,000 decode
+positions. A CPU comparison of its recovered M8 rows against the final compiled
+M8 rows confirms the same cross-run top-1/10/20 figures above: **9,811 top-1,
+4,845/756 top-10 set/order, and 2,227/4 top-20 set/order matches**. All 23 prefill
+full-vector digests already differ; prefill top-1 agrees at 21/23 predictions.
+This localizes an observable difference to no later than the prefill prediction,
+before speculative decode, but not to an individual operator.
+
+This is **not a same-build, mode-only test**. The earlier eager runner uses
+`max_num_seqs=1`, while the compiled runner uses `2`; their repair integration
+and performance implementations also differ. The next controlled experiment
+must equalize those settings, compare prefill, and then compare eager M8 with
+compiled M8 on identical saved tokens and stage inputs. No new GPU run was
+needed for this historical comparison. See
+[recovered M8 comparison](evidence/historical-eager-to-compiled-m8.json).
 
 The final 10K replay covers the all-seven-accepted D7 path. Separate small
 operator tests exercise acceptance boundaries, state/history comparisons,
