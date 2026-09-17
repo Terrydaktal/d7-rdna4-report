@@ -1,6 +1,6 @@
 {
   "upstream": "https://codeberg.org/StillDeadcode/libr4d",
-  "status": "Prepared experimental submissions; not yet open on Codeberg",
+  "status": "Open experimental draft PRs on Codeberg",
   "patches": [
     {
       "name": "attention",
@@ -9,7 +9,10 @@
       "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
       "patch": "attention.patch",
       "sha256": "ae4fe2ff47bef7a88e2a0305cb771a0095b4787c1fc96470292ee8f6985c97c4",
-      "codeberg_pr_open": false
+      "codeberg_pr_open": true,
+      "codeberg_pr_number": 5,
+      "codeberg_pr_url": "https://codeberg.org/StillDeadcode/libr4d/pulls/5",
+      "codeberg_pr_draft": true
     },
     {
       "name": "causal-prefill",
@@ -18,7 +21,10 @@
       "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
       "patch": "causal-prefill.patch",
       "sha256": "a30003130567a40d6cb9a339dcf0e9dbd8f67f1399e3da0025ee1ffb5ff82b52",
-      "codeberg_pr_open": false
+      "codeberg_pr_open": true,
+      "codeberg_pr_number": 6,
+      "codeberg_pr_url": "https://codeberg.org/StillDeadcode/libr4d/pulls/6",
+      "codeberg_pr_draft": true
     },
     {
       "name": "serial-gdn-contract",
@@ -27,7 +33,10 @@
       "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
       "patch": "serial-gdn-contract.patch",
       "sha256": "f92c3e403ba228f8a0e884c7ec2a1f4d4946315f8febb6a918b1e471b0906e2b",
-      "codeberg_pr_open": false
+      "codeberg_pr_open": true,
+      "codeberg_pr_number": 7,
+      "codeberg_pr_url": "https://codeberg.org/StillDeadcode/libr4d/pulls/7",
+      "codeberg_pr_draft": true
     }
   ]
 }

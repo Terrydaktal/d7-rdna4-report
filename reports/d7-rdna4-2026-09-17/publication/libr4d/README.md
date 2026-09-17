@@ -1,16 +1,16 @@
-# Prepared libr4d submissions
+# libr4d submissions
 
 These three independently applicable patches target libr4d commit
 `5dc6302b87d598d1d3bf2ad3b50aab365461a63c`. Each has its own branch and signed-off
-commit. `manifest.json` records the commit and patch hashes. They have **not**
-been opened as Codeberg PRs: this environment has no configured Codeberg account
-authentication.
+commit. All three are open as draft PRs from
+[Terrydaktal/libr4d](https://codeberg.org/Terrydaktal/libr4d).
+`manifest.json` records their PR URLs, submitted commits and patch hashes.
 
-| Patch | Review scope | Publication checks |
-| --- | --- | --- |
-| `attention.patch` | Experimental query-isolated M8 attention with shared KV reads; current-header build and original native reproducer | Current-header CPU HIP compilation passed; original source identities verified |
-| `causal-prefill.patch` | Experimental causal prefill reference targeting existing R4D M1 arithmetic | Current-header CPU HIP compilation passed; preserved 52-case native reference evidence described separately |
-| `serial-gdn-contract.patch` | Stock-FLA serial oracle, ordered Triton recurrence, adapters and state/acceptance regressions | 78 CPU checks passed; one retained-compiler-artifact check skipped |
+| Patch | Draft PR | Review scope | Publication checks |
+| --- | --- | --- | --- |
+| `attention.patch` | [#5](https://codeberg.org/StillDeadcode/libr4d/pulls/5) | Experimental query-isolated M8 attention with shared KV reads; current-header build and original native reproducer | Current-header CPU HIP compilation passed; original source identities verified |
+| `causal-prefill.patch` | [#6](https://codeberg.org/StillDeadcode/libr4d/pulls/6) | Experimental causal prefill reference targeting existing R4D M1 arithmetic | Current-header CPU HIP compilation passed; preserved 52-case native reference evidence described separately |
+| `serial-gdn-contract.patch` | [#7](https://codeberg.org/StillDeadcode/libr4d/pulls/7) | Stock-FLA serial oracle, ordered Triton recurrence, adapters and state/acceptance regressions | 78 CPU checks passed; one retained-compiler-artifact check skipped |
 
 These are additive experimental submissions. They do not install changes in the
 current libr4d public dispatcher. In particular, the stock-FLA reference still
@@ -24,30 +24,29 @@ because its equivalent downstream experiment passed. The report's completed
 10,000-position model comparison remains evidence for the exact pinned compiled
 Radiance stack.
 
-Draft PR descriptions are beside the patches. After Codeberg authentication and
-a fork are available, the existing branches can be pushed and submitted without
-recreating the work. The source in each patch can also be reviewed directly from
-this published bundle.
+Draft descriptions are beside the patches. The submitted branches contain the
+exact prepared commits; their source and validation evidence are unchanged.
+The source in each patch can also be reviewed directly from this published bundle.
 
 Each patch links directly to the [public report](../../REPORT.md). The manifest
 records the current prepared commit and patch identities.
 
-## Publish the existing branches
+## Update the existing branches
 
-Create a Codeberg fork of `StillDeadcode/libr4d`. Replace `YOUR_ACCOUNT` below
-with your Codeberg username, then run these commands on the development host:
+After committing a reviewed update, push the corresponding branch from the
+development host. Codeberg updates its existing PR automatically:
 
 ```sh
 git -C /home/lewis/tasks/qwen-pr-libr4d-20260917 push \
-  https://codeberg.org/YOUR_ACCOUNT/libr4d.git fix/query-isolated-m8-attention
+  https://codeberg.org/Terrydaktal/libr4d.git fix/query-isolated-m8-attention
 git -C /home/lewis/tasks/qwen-pr-libr4d-prefill-20260917 push \
-  https://codeberg.org/YOUR_ACCOUNT/libr4d.git fix/causal-gdn-prefill
+  https://codeberg.org/Terrydaktal/libr4d.git fix/causal-gdn-prefill
 git -C /home/lewis/tasks/qwen-pr-libr4d-gdn-20260917 push \
-  https://codeberg.org/YOUR_ACCOUNT/libr4d.git fix/serial-contract-gdn
+  https://codeberg.org/Terrydaktal/libr4d.git fix/serial-contract-gdn
 ```
 
-Open one draft pull request per branch against `StillDeadcode/libr4d:main`.
-Use the title and body from the corresponding file:
+The PRs target `StillDeadcode/libr4d:main`. Their descriptions are retained here;
+Codeberg's `WIP:` title prefix marks each submission as a draft:
 
 - [Attention title and body](attention-pr.md), with [attention.patch](attention.patch).
 - [Causal-prefill title and body](causal-prefill-pr.md), with [causal-prefill.patch](causal-prefill.patch).
