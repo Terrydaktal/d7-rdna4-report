@@ -1,0 +1,10 @@
+{
+  "evidence/eager-to-compiled-m1.json": "41a493a501b4d9b74cb8c5f59a6eb496f20117c4fd83f9eb56c3f88082c458a6",
+  "evidence/fixed-compiled-10k-audit.json": "0944d1d9f21f5710b97ed4a10c5df696ae8c9125b2a46c3638262b6e8e7c80db",
+  "evidence/fixed-compiled-10k-summary.json": "0e2ea8108e273893e5e79f6d2ee6901a17b79b4d7d2c816a69e99d1fb0d746a8",
+  "evidence/fixed-compiled-320-comparison.json": "646daaede918fa8107bc9b1ec2253c6ad1a2d7a4b11c97282d0db3d2d79eba80",
+  "evidence/fixed-compiled-profile.json": "b3ee37f431a2f9da396e6d087c02387e0bb78075c1dcf3ec3a7da224f161ec9e",
+  "evidence/old-compiled-320-comparison.json": "1d61eef89358119efdf1bb5990b30cd092d171db8557ec95d73106821717ede9",
+  "evidence/old-compiled-profile.json": "3dec23e11220cb0b697aeaba0fc434c6a04ff33fcef843dbd8dc642644fc9921",
+  "evidence/upstream-norm-probe.json": "801be1742c69bc551250eaffbbc8752a7222a5ebefd3a5e77855e7f02a237b14"
+}

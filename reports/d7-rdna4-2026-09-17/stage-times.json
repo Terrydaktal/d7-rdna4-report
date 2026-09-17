@@ -1,0 +1,110 @@
+{
+  "unit": "sum of GPU kernel durations per profiled round, milliseconds",
+  "profile_rounds_per_arm": 8,
+  "rows": [
+    {
+      "stage": "MXFP4 folded projections",
+      "old_ms": 24.2425275,
+      "fixed_ms": 25.495713249999973,
+      "repair": "No projection arithmetic change."
+    },
+    {
+      "stage": "MXFP4 projections, split-4 kernel",
+      "old_ms": 7.6330070000000045,
+      "fixed_ms": 7.5536821250000035,
+      "repair": "No projection arithmetic change."
+    },
+    {
+      "stage": "MXFP4 projections, split-1 kernel",
+      "old_ms": 4.980763749999999,
+      "fixed_ms": 4.973386250000002,
+      "repair": "No projection arithmetic change."
+    },
+    {
+      "stage": "Attention decode",
+      "old_ms": 4.103902249999999,
+      "fixed_ms": 5.672972874999998,
+      "repair": "Keep each query's serial causal tile/reduction contract; share KV reads across eight queries."
+    },
+    {
+      "stage": "Attention split-KV merge",
+      "old_ms": 0.25455024999999987,
+      "fixed_ms": 0.12357962499999998,
+      "repair": "Preserve the serial per-query split/merge arithmetic."
+    },
+    {
+      "stage": "Activation FP8 quantization",
+      "old_ms": 2.484757375,
+      "fixed_ms": 0.8148178750000092,
+      "repair": "Same quantization kernel; measured timing change is not evidence of a quantizer repair."
+    },
+    {
+      "stage": "GDN recurrent update and gates",
+      "old_ms": 1.1497647500000001,
+      "fixed_ms": 1.211082125000001,
+      "repair": "Match serial gate precision, reduction order, recurrent transition and output rounding; preserve packed QKV views."
+    },
+    {
+      "stage": "GDN convolution",
+      "old_ms": 0.7689096249999998,
+      "fixed_ms": 0.22806287499999997,
+      "repair": "Use the qualified serial product/accumulation order with rolling state; remove unnecessary packed-QKV copies."
+    },
+    {
+      "stage": "Attention KV write",
+      "old_ms": 0.14834500000000006,
+      "fixed_ms": 0.046744249999999994,
+      "repair": "No KV-format change; timing includes the same cache-write kernel."
+    },
+    {
+      "stage": "Explicit residual and Q/K/final normalization",
+      "old_ms": null,
+      "fixed_ms": 0.8129525000000035,
+      "repair": "Preserve reduction tree, rsqrt and BF16 rounding boundaries; retain FP32 residual sums in registers."
+    },
+    {
+      "stage": "Explicit GDN gated normalization",
+      "old_ms": null,
+      "fixed_ms": 0.09817774999999988,
+      "repair": "Fix the row tile at the serial shape while processing all rows in parallel."
+    },
+    {
+      "stage": "Compiler-fused normalization, activations, embedding and other pointwise work",
+      "old_ms": 1.3983104999999998,
+      "fixed_ms": 0.33585087500000027,
+      "repair": "Bind repaired normalization as opaque compiled operators before graph capture; remaining operations retain compiler fusion."
+    },
+    {
+      "stage": "Target copies, conversions and buffer initialization",
+      "old_ms": 0.6332713750000012,
+      "fixed_ms": 0.3585367500000002,
+      "repair": "Keep packed GDN views and remove three materializations plus concatenation; other copies remain."
+    },
+    {
+      "stage": "Full BF16 vocabulary head",
+      "old_ms": 4.106372875,
+      "fixed_ms": 4.134466375,
+      "repair": "Two interleaved M4 groups in one HIP launch preserve serial arithmetic without two launches and concatenation."
+    },
+    {
+      "stage": "Drafter, including proposal head",
+      "old_ms": 6.333590999999998,
+      "fixed_ms": 6.447092,
+      "repair": "Unchanged drafter; kept separate from target correctness."
+    },
+    {
+      "stage": "GPU work outside attributed model stages",
+      "old_ms": 0.9183998750000002,
+      "fixed_ms": 0.5122940000000001,
+      "repair": "Includes sampling/state bookkeeping/copies; no invented per-operation attribution."
+    }
+  ],
+  "target_body_ms": {
+    "old": 47.79810937499984,
+    "fixed": 47.725559124999556
+  },
+  "all_kernel_ms": {
+    "old": 59.156473125000005,
+    "fixed": 58.81941149999999
+  }
+}

@@ -1,0 +1,211 @@
+"""Rebuild public numeric tables from aggregate, transcript-free receipts."""
+
+import csv
+import hashlib
+import json
+from collections import defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+
+
+def read(name):
+    return json.loads((ROOT / "evidence" / name).read_text())
+
+
+def category(name):
+    if "radiance_mxfp4_fp8_gemm_folded" in name:
+        return "MXFP4 folded projections"
+    if "radiance_mxfp4_fp8_gemm_decode<8, 128, 4" in name:
+        return "MXFP4 projections, split-4 kernel"
+    if "radiance_mxfp4_fp8_gemm_decode<8, 128, 1" in name:
+        return "MXFP4 projections, split-1 kernel"
+    if "attn_decode_kernel" in name or "shared_decode" in name:
+        return "Attention decode"
+    if "attn_splitkv_combine" in name or "shared_merge" in name:
+        return "Attention split-KV merge"
+    if "dynamic_per_token_scaled_fp8_quant" in name:
+        return "Activation FP8 quantization"
+    if "gdn_recurrent_update" in name or "stock_gdn_scan" in name:
+        return "GDN recurrent update and gates"
+    if "gdn_conv_update" in name or "causal_conv1d_update" in name:
+        return "GDN convolution"
+    if "reshape_and_cache" in name:
+        return "Attention KV write"
+    if "stock_m1_gemma_norm" in name:
+        return "Explicit residual and Q/K/final normalization"
+    if "layer_norm_fwd_kernel" in name:
+        return "Explicit GDN gated normalization"
+    if "triton_" in name:
+        return "Compiler-fused normalization, activations, embedding and other pointwise work"
+    return "Target copies, conversions and buffer initialization"
+
+
+FIXES = {
+    "MXFP4 folded projections": "No projection arithmetic change.",
+    "MXFP4 projections, split-4 kernel": "No projection arithmetic change.",
+    "MXFP4 projections, split-1 kernel": "No projection arithmetic change.",
+    "Attention decode": (
+        "Keep each query's serial causal tile/reduction contract; share KV "
+        "reads across eight queries."
+    ),
+    "Attention split-KV merge": "Preserve the serial per-query split/merge arithmetic.",
+    "Activation FP8 quantization": (
+        "Same quantization kernel; measured timing change is not evidence of a quantizer repair."
+    ),
+    "GDN recurrent update and gates": (
+        "Match serial gate precision, reduction order, recurrent "
+        "transition and output rounding; preserve packed QKV views."
+    ),
+    "GDN convolution": (
+        "Use the qualified serial product/accumulation order with rolling "
+        "state; remove unnecessary packed-QKV copies."
+    ),
+    "Attention KV write": "No KV-format change; timing includes the same cache-write kernel.",
+    "Explicit residual and Q/K/final normalization": (
+        "Preserve reduction tree, rsqrt and BF16 rounding boundaries; "
+        "retain FP32 residual sums in registers."
+    ),
+    "Explicit GDN gated normalization": (
+        "Fix the row tile at the serial shape while processing all rows in parallel."
+    ),
+    "Compiler-fused normalization, activations, embedding and other pointwise work": (
+        "Bind repaired normalization as opaque compiled operators before "
+        "graph capture; remaining operations retain compiler fusion."
+    ),
+    "Target copies, conversions and buffer initialization": (
+        "Keep packed GDN views and remove three materializations plus "
+        "concatenation; other copies remain."
+    ),
+}
+
+
+def main():
+    profiles = {arm: read(f"{arm}-compiled-profile.json") for arm in ("old", "fixed")}
+    groups = {}
+    dispatches = []
+    for arm, profile in profiles.items():
+        by_group = defaultdict(float)
+        divisor = 1000 * profile["profile_steps"]
+        assert profile["profile_steps"] == 8
+        for item in profile["attribution"]["kernel_groups"]:
+            group = category(item["kernel"]) if item["stage"] == "target_body" else item["stage"]
+            ms = item["kernel_us"] / divisor
+            by_group[group] += ms
+            dispatches.append(
+                {
+                    "arm": arm,
+                    "group": group,
+                    "kernel": item["kernel"],
+                    "calls": item["calls"],
+                    "milliseconds_per_round": ms,
+                }
+            )
+        total = sum(by_group.values())
+        assert abs(total - profile["attribution"]["kernel_us"] / divisor) < 1e-8
+        assert (
+            sum(x["calls"] for x in profile["attribution"]["kernel_groups"])
+            == profile["attribution"]["kernels"]
+        )
+        groups[arm] = dict(by_group)
+    rows = [
+        {
+            "stage": group,
+            "old_ms": groups["old"].get(group),
+            "fixed_ms": groups["fixed"].get(group),
+            "repair": FIXES[group],
+        }
+        for group in FIXES
+    ]
+    for group, label, fix in (
+        (
+            "target_vocabulary_head",
+            "Full BF16 vocabulary head",
+            "Two interleaved M4 groups in one HIP launch preserve serial arithmetic without "
+            "two launches and concatenation.",
+        ),
+        (
+            "drafter",
+            "Drafter, including proposal head",
+            "Unchanged drafter; kept separate from target correctness.",
+        ),
+        (
+            "unattributed",
+            "GPU work outside attributed model stages",
+            "Includes sampling/state bookkeeping/copies; no invented per-operation attribution.",
+        ),
+    ):
+        rows.append(
+            {
+                "stage": label,
+                "old_ms": groups["old"][group],
+                "fixed_ms": groups["fixed"][group],
+                "repair": fix,
+            }
+        )
+    result = {
+        "unit": "sum of GPU kernel durations per profiled round, milliseconds",
+        "profile_rounds_per_arm": 8,
+        "rows": rows,
+        "target_body_ms": {
+            a: profiles[a]["attribution"]["stages"]["target_body"]["kernel_us"] / 8000
+            for a in profiles
+        },
+        "all_kernel_ms": {a: sum(groups[a].values()) for a in profiles},
+    }
+    (ROOT / "stage-times.json").write_text(json.dumps(result, indent=2) + "\n")
+    table = [
+        "| Compiled GPU stage/group | Old M8 (ms) | Fixed M8 (ms) | Repair / interpretation |",
+        "| --- | ---: | ---: | --- |",
+    ]
+    for row in rows:
+        values = [
+            "Included in fused group" if row[k] is None else f"{row[k]:.3f}"
+            for k in ("old_ms", "fixed_ms")
+        ]
+        table.append(f"| {row['stage']} | {values[0]} | {values[1]} | {row['repair']} |")
+    (ROOT / "stage-table.md").write_text("\n".join(table) + "\n")
+    template = ROOT / "report.template.md"
+    if template.exists():
+        (ROOT / "REPORT.md").write_text(
+            template.read_text().replace("{{STAGE_TABLE}}", "\n".join(table))
+        )
+    with (ROOT / "kernel-dispatches.csv").open("w") as out:
+        writer = csv.DictWriter(out, fieldnames=list(dispatches[0]))
+        writer.writeheader()
+        writer.writerows(dispatches)
+    summary = read("fixed-compiled-10k-summary.json")
+    assert summary["decode"]["positions"] == 10000
+    assert summary["prefill"]["positions"] == 23
+    for domain in ("decode", "prefill"):
+        count = summary[domain]["positions"]
+        assert summary[domain]["full_logits_exact"] == count
+        for k in ("1", "10", "20"):
+            assert all(
+                summary[domain][k][field] == count
+                for field in (
+                    "set_exact",
+                    "ranked_exact",
+                    "retained_scores_exact",
+                    "inclusive_tie_set_exact",
+                )
+            )
+    manifests = {
+        str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted((ROOT / "evidence").glob("*.json"))
+    }
+    (ROOT / "evidence-sha256.json").write_text(json.dumps(manifests, indent=2) + "\n")
+    print(
+        json.dumps(
+            {
+                "accounting_verified": True,
+                "comparison_verified": True,
+                "target_body_ms": result["target_body_ms"],
+                "all_kernel_ms": result["all_kernel_ms"],
+            }
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

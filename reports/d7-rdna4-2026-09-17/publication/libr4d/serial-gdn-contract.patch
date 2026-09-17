@@ -1,0 +1,2262 @@
+From 5d03c0f1f59837bfd41cc5b9f7f6a248ca2ec37e Mon Sep 17 00:00:00 2001
+From: Terrydaktal <9lewis9@gmail.com>
+Date: Thu, 17 Sep 2026 05:31:31 +0100
+Subject: [PATCH] Publish serial GDN arithmetic contract and speculative
+ reference adapters
+
+Provide the pinned stock-FLA oracle and ordered Triton scan used to diagnose and repair serial/speculative state divergence. Preserve BF16 beta rounding, stock normalization and reduction operations, persistent FP32 state and output conversion rather than silently selecting a different numerical target.
+
+Include convolution, prefill, recurrent and indexed adapters, per-row state selection and native differential replay. Explicitly distinguish processed verification rows from the newly emitted pending token and retain independent state for accepted prefixes. Add source provenance, the immutable reference contract and CPU ownership/admission regressions with negative controls.
+
+Validation: 78 CPU checks passed; one retained compiler-artifact check was explicitly skipped. Copied runtime sources match the qualified downstream identities. The complete compiled Radiance integration has separate 10K evidence; this bundle supplies a test oracle for an upstream HIP port and does not claim that production libr4d has already been converted or qualified.
+Signed-off-by: Terrydaktal <9lewis9@gmail.com>
+---
+ experimental/serial_gdn_contract/.gitignore   |   9 +
+ experimental/serial_gdn_contract/README.md    |  63 +++++
+ .../SOURCE_PROVENANCE.json                    |  38 +++
+ .../profiles/gdn-stock-m1-arithmetic-v1.json  | 152 ++++++++++
+ .../probe_stock_gdn_sequence.py               | 237 ++++++++++++++++
+ .../reference-contract.json                   | 152 ++++++++++
+ .../stock_gdn_convolution_adapter.py          |  76 +++++
+ .../stock_gdn_indexed_adapter.py              | 124 +++++++++
+ .../stock_gdn_prefill_adapter.py              |  79 ++++++
+ .../stock_gdn_recurrent_adapter.py            | 141 ++++++++++
+ .../serial_gdn_contract/stock_gdn_scan.py     |  98 +++++++
+ .../stock_gdn_scan_kernel.py                  | 115 ++++++++
+ .../serial_gdn_contract/stock_gdn_sequence.py | 263 ++++++++++++++++++
+ .../test_stock_gdn_convolution_adapter.py     |  55 ++++
+ .../tests/test_stock_gdn_prefill_adapter.py   |  84 ++++++
+ .../tests/test_stock_gdn_recurrent_adapter.py | 152 ++++++++++
+ .../tests/test_stock_gdn_scan.py              |  53 ++++
+ .../tests/test_stock_gdn_sequence.py          | 209 ++++++++++++++
+ 18 files changed, 2100 insertions(+)
+ create mode 100644 experimental/serial_gdn_contract/.gitignore
+ create mode 100644 experimental/serial_gdn_contract/README.md
+ create mode 100644 experimental/serial_gdn_contract/SOURCE_PROVENANCE.json
+ create mode 100644 experimental/serial_gdn_contract/configs/profiles/gdn-stock-m1-arithmetic-v1.json
+ create mode 100644 experimental/serial_gdn_contract/probe_stock_gdn_sequence.py
+ create mode 100644 experimental/serial_gdn_contract/reference-contract.json
+ create mode 100644 experimental/serial_gdn_contract/stock_gdn_convolution_adapter.py
+ create mode 100644 experimental/serial_gdn_contract/stock_gdn_indexed_adapter.py
+ create mode 100644 experimental/serial_gdn_contract/stock_gdn_prefill_adapter.py
+ create mode 100644 experimental/serial_gdn_contract/stock_gdn_recurrent_adapter.py
+ create mode 100644 experimental/serial_gdn_contract/stock_gdn_scan.py
+ create mode 100644 experimental/serial_gdn_contract/stock_gdn_scan_kernel.py
+ create mode 100644 experimental/serial_gdn_contract/stock_gdn_sequence.py
+ create mode 100644 experimental/serial_gdn_contract/tests/test_stock_gdn_convolution_adapter.py
+ create mode 100644 experimental/serial_gdn_contract/tests/test_stock_gdn_prefill_adapter.py
+ create mode 100644 experimental/serial_gdn_contract/tests/test_stock_gdn_recurrent_adapter.py
+ create mode 100644 experimental/serial_gdn_contract/tests/test_stock_gdn_scan.py
+ create mode 100644 experimental/serial_gdn_contract/tests/test_stock_gdn_sequence.py
+
+diff --git a/experimental/serial_gdn_contract/.gitignore b/experimental/serial_gdn_contract/.gitignore
+new file mode 100644
+index 0000000..8e454e1
+--- /dev/null
++++ b/experimental/serial_gdn_contract/.gitignore
+@@ -0,0 +1,9 @@
++__pycache__/
++.pytest_cache/
++.ruff_cache/
++*.so
++*.hsaco
++*.pyc
++*.pt
++*.jsonl
++build/
+diff --git a/experimental/serial_gdn_contract/README.md b/experimental/serial_gdn_contract/README.md
+new file mode 100644
+index 0000000..7e21493
+--- /dev/null
++++ b/experimental/serial_gdn_contract/README.md
+@@ -0,0 +1,63 @@
++# Serial GDN contract and speculative reference
++
++This bundle supplies the tested stock-FLA arithmetic reference and adapters used
++to localize and repair M1/M8 disagreement. It is an experimental reference for a
++libr4d port, **not a completed HIP replacement in libr4d's public dispatcher**.
++The complete tested Radiance integration is in
++[Radiance #11](https://github.com/magiccodingman/vllm-radiance/pull/11).
++
++```text
++experimental/serial_gdn_contract/
++├── reference-contract.json       # immutable finite-precision specification and artifact hashes
++├── stock_gdn_sequence.py         # pinned native M1 oracle and private after-row state
++├── stock_gdn_scan_kernel.py      # ordered Triton transition with the same arithmetic
++├── stock_gdn_scan.py             # scan admission and retained-state selection
++├── stock_gdn_*adapter.py         # convolution, prefill, recurrence and indexed calls
++├── probe_stock_gdn_sequence.py   # native differential replay and negative controls
++├── tests/                       # CPU state/ownership/admission regressions
++└── SOURCE_PROVENANCE.json        # downstream source identities
++```
++
++Unlike the R4D-M1 prefill reference, this contract rounds sigmoid beta through
++BF16, uses the stock reduction/normalization operations and uses the stock output
++rounding. A higher-precision beta is a different target, even if it appears more
++accurate in isolation. The preserved contract's historical status fields are
++not rewritten: its hash identifies the reference definition, while later
++qualification receipts record what was subsequently tested.
++
++Row zero processes the previously emitted pending token. For k accepted proposals
++(0 through 7), commit state after row k; the newly emitted correction or bonus
++token is pending, not prematurely consumed. Rejected rows cannot modify the
++retained prefix. The scan retains each state tile in registers across its ordered
++token loop, preserving transitions without eight separate whole-model launches.
++
++The support package from [Radiance #10](https://github.com/magiccodingman/vllm-radiance/pull/10)
++is required. With its checkout path in `RADIANCE`, run the CPU suite from this
++repository root:
++
++```sh
++uv run --project "$RADIANCE/benchmarks/conformance" --extra cpu-tests \
++  pytest experimental/serial_gdn_contract/tests -q
++```
++
++These tests exercise the actual coordination code with deliberate CPU stand-ins;
++they do not pretend the stand-ins perform GDN arithmetic. The optional native
++compiler-identity check needs preserved HSACO/metadata through
++`RADIANCE_GDN_REFERENCE_ARTIFACTS`; an absent artifact is an explicit skip.
++
++Native replay needs the pinned ROCm/vLLM environment, original source/compiler
++artifacts, authenticated synthetic capture and the shared exclusive GPU lease.
++The companion Radiance repair package supplies the remaining probe helpers.
++Consult `probe_stock_gdn_sequence.py --help` before admitting GPU execution.
++The native serial coordinator previously passed 38 exact state/output checks and
++detected both injected faults. The final compiled integration subsequently
++matched top-1/10/20 membership, ordering and full-logit digests at all 10,000
++positions, plus 23 prefills. That full result includes other stage repairs and
++must not be attributed to GDN alone.
++
++Remaining work for a production libr4d port: choose and preserve this declared
++contract in HIP, add the appropriate public dispatch/bindings, repeat native
++state/acceptance/graph checks, then perform complete model and speed qualification.
++The reference is provided so that work has a precise test oracle.
++
++[Report and compiled stage breakdown](https://github.com/Terrydaktal/qwen-r9700-lab/releases/tag/d7-report-v1.0.0).
+diff --git a/experimental/serial_gdn_contract/SOURCE_PROVENANCE.json b/experimental/serial_gdn_contract/SOURCE_PROVENANCE.json
+new file mode 100644
+index 0000000..d7b9a66
+--- /dev/null
++++ b/experimental/serial_gdn_contract/SOURCE_PROVENANCE.json
+@@ -0,0 +1,38 @@
++{
++  "source_project": "https://github.com/Terrydaktal/qwen-r9700-lab",
++  "scope": "Preserved downstream sources; historical qualification applies to their pinned dependencies, not automatically to current libr4d.",
++  "files": {
++    "stock_gdn_scan.py": {
++      "source": "experiments/radiance-public/stock_gdn_scan.py",
++      "sha256": "f90b89d780ec9a6d69298c83617744d873e8fcf98d230be5a074f60606493e14"
++    },
++    "stock_gdn_scan_kernel.py": {
++      "source": "experiments/radiance-public/stock_gdn_scan_kernel.py",
++      "sha256": "bc38321d7a0954d718f86e0f6b19d6b6ad9218cf88aeb03d49e08953bd5e7163"
++    },
++    "stock_gdn_sequence.py": {
++      "source": "experiments/radiance-public/stock_gdn_sequence.py",
++      "sha256": "b270e32ae8d56b7fb51988ea101534de3e248fffc6cc65e5d1be7a9560494de1"
++    },
++    "stock_gdn_indexed_adapter.py": {
++      "source": "experiments/radiance-public/stock_gdn_indexed_adapter.py",
++      "sha256": "686eaee005173b76876bd793b42faa2f1badae62879ef0fa8fbaf0cc42d30dd5"
++    },
++    "stock_gdn_convolution_adapter.py": {
++      "source": "experiments/radiance-public/stock_gdn_convolution_adapter.py",
++      "sha256": "b2ba170fead294b8cb8b34da715caa05490c7739bef28c9b59c9b74b24318504"
++    },
++    "stock_gdn_recurrent_adapter.py": {
++      "source": "experiments/radiance-public/stock_gdn_recurrent_adapter.py",
++      "sha256": "303f84504b9e086584117347bcd388addfaf72fbac5a4a7983b585160be6de4e"
++    },
++    "stock_gdn_prefill_adapter.py": {
++      "source": "experiments/radiance-public/stock_gdn_prefill_adapter.py",
++      "sha256": "0a2878e5cdd955fda69981d3b074c7ed83c9c2508d367b2a6ebff7489f4c31bd"
++    },
++    "probe_stock_gdn_sequence.py": {
++      "source": "experiments/radiance-public/probe_stock_gdn_sequence.py",
++      "sha256": "77a212dda28acf9d047e105178ead8c732711a9672730c2bac9ea353d764057d"
++    }
++  }
++}
+diff --git a/experimental/serial_gdn_contract/configs/profiles/gdn-stock-m1-arithmetic-v1.json b/experimental/serial_gdn_contract/configs/profiles/gdn-stock-m1-arithmetic-v1.json
+new file mode 100644
+index 0000000..bd6ceae
+--- /dev/null
++++ b/experimental/serial_gdn_contract/configs/profiles/gdn-stock-m1-arithmetic-v1.json
+@@ -0,0 +1,152 @@
++{
++  "schema": "urn:qwen:gdn-arithmetic-contract:v1",
++  "id": "stock-packed-gdn-m1-gfx1201-v1",
++  "scope": "GDN core from raw convolution Q/K/V and gate projections to output plus recurrent state; other operators have separate contracts.",
++  "status": "DECLARED; native cross-mode equivalence UNPROVED",
++  "selection": "Pinned stock vLLM packed single-token GDN, applied causally to each materialized token. R4D and NumPy remain separately identified implementations.",
++  "domain": {
++    "query_heads": 16,
++    "value_heads": 48,
++    "key_width": 128,
++    "value_width": 128,
++    "batch_sequences": 1,
++    "qkv_width": 10240,
++    "state_order": [
++      "head",
++      "value",
++      "key"
++    ],
++    "state_elements": 786432,
++    "inputs": "Finite BF16 Q/K/V, a, b, dt_bias; finite FP32 A_log and initial state. Invalid geometry, aliasing, nonfinite output/state or incomplete evidence fails closed."
++  },
++  "precision": {
++    "qkv": "BF16 widened exactly to FP32",
++    "a_b_dt_bias": "BF16 widened exactly to FP32",
++    "A_log": "FP32",
++    "qk_normalization": "FP32 throughout; no intermediate BF16 cast",
++    "beta": "sigmoid in the pinned FP32 kernel, then BF16 round-to-nearest ties-even, then exact FP32 widening",
++    "decay_gate": "FP32",
++    "recurrent_state": "FP32 on every read, update and committed write",
++    "output": "BF16 round-to-nearest ties-even"
++  },
++  "operations": [
++    {
++      "name": "normalize",
++      "formula": "n(x) = x / sqrt(sum(x_i*x_i) + float32(1e-6))",
++      "arithmetic": "Pinned compiled reduction, square root and division. No replacement with a differently rounded reciprocal-square-root multiply."
++    },
++    {
++      "name": "scale_query",
++      "formula": "q = float32(n(Q) * float32(128**-0.5)); k = n(K)",
++      "arithmetic": "Scale q before the output dot product; not after it."
++    },
++    {
++      "name": "gates",
++      "formula": "x = float32(a + dt_bias); softplus = x if x > 20 else log(1 + exp(x)); g = -exp(A_log)*softplus; beta = widen(BF16_RNE(sigmoid(b)))",
++      "arithmetic": "The pinned kernel intrinsics and their compiled implementations define rounding. No cumulative-gate reconstruction or future-dependent fallback."
++    },
++    {
++      "name": "decay",
++      "formula": "D = float32(exp(g)*S)"
++    },
++    {
++      "name": "prediction",
++      "formula": "p = dot_stock(D,k)"
++    },
++    {
++      "name": "residual",
++      "formula": "r = float32(float32(v-p)*beta)"
++    },
++    {
++      "name": "state",
++      "formula": "S_next = update_stock(D,r,k)",
++      "arithmetic": "Retain the compiled multiply-add contraction; separate multiply/add is a different numerical path."
++    },
++    {
++      "name": "output",
++      "formula": "o = BF16_RNE(dot_stock(S_next,q))"
++    }
++  ],
++  "arithmetic_authority": {
++    "kind": "pinned-native-executable",
++    "note": "Real-number formulae describe dataflow. Exact finite-precision results are defined by the retained kernel artifact and packing below, under the declared compiler/hardware assumptions. Source inspection or matching hashes is not proof of runtime dispatch or functional correctness.",
++    "kernel": "fused_recurrent_gated_delta_rule_packed_decode_kernel",
++    "source": {
++      "fused_recurrent.py": "00a3b971b0dbb6ed26e246970a0e1a21a9a174030974685bdd3f0c8ab5fb4bfe",
++      "fla_op.py": "456da84fd12411cf53c96a90dd4f78f49afb454c3d51d2c524ea8e7106fe8ae5"
++    },
++    "cache_entry": "XW6RXQHLHKDBX2FF2LE7HICYZGQCSR5L4HJZ7USZF4L2FZQULJTQ",
++    "files": {
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.source": "f47615b4e3c0a4136cb3d5f7e526f222c8609e73dff2d89111c34ba1745ac1a7",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.ttir": "0333349d4ff544078a5d35354a5ca42d7fe37360af7ce188d9778dba7887aabf",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.ttgir": "889064969acdafd8931d3d7ae02e5b0ce98fdb80ac1f9df9fb919b5259c2645c",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.llir": "eb6f3975ed77e9f0b53975d1d1c0739abdba06813e64bea8aa6f66baeadd19f2",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.amdgcn": "f07d71ae362c0e87633253a85c2571e0ac626ff8b520034e16b554687ec4e1a1",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.hsaco": "9feeb930b8635122c552ad727fbe897d0854332f9a7880468662b9ed83350135",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.json": "de1084d3b9e844ded01cd70f866eda11618a6e95e1471b0ccc0f295921c96fad"
++    },
++    "target": {
++      "backend": "hip",
++      "arch": "gfx1201",
++      "warp_size": 32
++    },
++    "compiler": {
++      "triton_version": "3.7.1",
++      "num_warps": 1,
++      "num_stages": 3,
++      "enable_fp_fusion": true,
++      "allow_flush_denorm": false,
++      "sanitize_overflow": true
++    },
++    "environment": {
++      "FLA_USE_FAST_OPS": "0"
++    },
++    "packing": {
++      "query_heads": 16,
++      "value_heads": 48,
++      "K": 128,
++      "V": 128,
++      "BK": 128,
++      "BV": 32,
++      "state_token_stride": 802816,
++      "a_token_stride": 96,
++      "b_token_stride": 96,
++      "index_stride": 1,
++      "state_slot": 1,
++      "grid": [
++        4,
++        48
++      ],
++      "scale_fp32_hex": "f304b53d",
++      "note": "Single row makes the packed-QKV row stride irrelevant to this invocation. Reject or separately qualify other physical packing; physical block numbers are not semantic state."
++    }
++  },
++  "execution_modes": {
++    "m1": "One invocation F(S,u) with exactly one materialized input token.",
++    "prefill": "Ordered fold of that same F over tokens. Empty segment is the identity. Every intermediate prefix must match.",
++    "d7": "Verification rows are u[0]=previously emitted pending token, u[1:8]=seven proposals. For accepted proposal count k in 0..7, commit the state after rows 0..k (k+1 processed rows); the newly emitted correction/bonus token stays pending.",
++    "rollback": "Rejected rows cannot affect committed GDN state, convolution history, KV, positions or events. The GDN-only contract does not certify those other components.",
++    "snapshot": "Persist the contract identity with state; do not treat states created under a different arithmetic contract as interchangeable without checking or rebuilding."
++  },
++  "obligations": {
++    "partition": "fold(F,S,A+B) == fold(F,fold(F,S,A).state,B) for outputs and state, including empty segments",
++    "causal_prefix": "Changing inputs after prefix p leaves every output/state through p byte-identical.",
++    "accepted_prefix": "D7_commit(S,u,k) == fold(F,S,u[:k+1]).state with a separate pending-token field.",
++    "exactness": "Compare BF16 output bits and every FP32 logical-state bit; hashes and error tolerances alone do not establish equality."
++  },
++  "separate_targets": {
++    "numpy-serial-fp32-v1": "Independent canonical model. It rounds normalized Q/K to BF16, uses ordered non-fused reductions and scales the final output dot. It is not relabelled as this stock kernel.",
++    "r4d-unfused-m1": "Retains FP32 beta, uses its own reduction/normalization intrinsics, disables FMA and rounds output ties away. Existing prefill candidate targets this path, not this contract.",
++    "huggingface-fallback": "The pinned Transformers fallback also returns BF16 beta, but its normalization and framework reductions differ. Full bit equality with it is UNPROVED."
++  },
++  "required_qualification": [
++    "Reproduce the preserved stock first transition exactly with the selected invocation packing.",
++    "Compare repaired prefill/M1/D7 against this oracle from equal independent initial state.",
++    "Exercise every accepted width, all-prefix equality, future-suffix mutations, padding, nonzero state, extreme gates and BF16 halfway boundaries.",
++    "Then qualify graph execution, full-model logits/state, snapshots and long contexts; benchmark separately."
++  ],
++  "production_changed": false,
++  "existing_matrix_contract_changed": false,
++  "native_repair_qualified": false,
++  "sha256": "d8149b00210c94acfca4f1f66030de302dcaf8155894de6a23d3f4b76da61e00"
++}
+diff --git a/experimental/serial_gdn_contract/probe_stock_gdn_sequence.py b/experimental/serial_gdn_contract/probe_stock_gdn_sequence.py
+new file mode 100644
+index 0000000..644e26b
+--- /dev/null
++++ b/experimental/serial_gdn_contract/probe_stock_gdn_sequence.py
+@@ -0,0 +1,237 @@
++"""Qualify the pinned-stock GDN fold against a retained native transition.
++
++This opt-in operator experiment never installs a hook or changes the matrix.
++Run only as an admitted GPU job, after the current owner releases its lease.
++The recorded wall time includes diagnostic checks and is not a speed benchmark.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import os
++import time
++from pathlib import Path
++
++import numpy as np
++
++from qwen_r9700_lab.diagnostic_contract import DiagnosticError, seal, write_private
++
++
++def compare_tensors(label, left, right, output):
++    if left.dtype != right.dtype or left.shape != right.shape:
++        raise DiagnosticError("GDN comparison requires identical representations")
++    # Comparing physical bytes detects signed zeros and one-bit state damage.
++    import torch
++
++    arrays = []
++    for value in (left, right):
++        # A singleton can be "contiguous" while retaining a non-unit stride.
++        # Materialize canonical logical storage before reinterpreting its bytes.
++        packed = torch.empty(value.shape, dtype=value.dtype, device="cpu")
++        packed.copy_(value.detach())
++        arrays.append(packed.reshape(-1).view(torch.uint8).numpy())
++    differences = np.flatnonzero(arrays[0].reshape(-1) != arrays[1].reshape(-1))
++    row = {
++        "case": label,
++        "equal": len(differences) == 0,
++        "different_bytes": len(differences),
++        "first_differing_byte": int(differences[0]) if len(differences) else None,
++        "dtype": str(left.dtype),
++        "shape": list(left.shape),
++        "payload_sha256": [hashlib.sha256(a.tobytes()).hexdigest() for a in arrays],
++    }
++    if len(differences):
++        evidence = output / label
++        evidence.mkdir(mode=0o700)
++        for name, array in zip(("actual.bin", "expected.bin"), arrays, strict=True):
++            (evidence / name).write_bytes(array.tobytes())
++        write_private(evidence / "comparison.json", seal(row))
++    return row
++
++
++def classify(rows, negative_controls):
++    # Check the actual named domain, not merely all([]) or a subset of cases.
++    expected = {"captured-stock-state", "captured-stock-output"}
++    expected.update(f"accept-{k}-{kind}" for k in range(8) for kind in ("state", "output"))
++    expected.update(f"suffix-{k}-{kind}" for k in range(7) for kind in ("state", "output"))
++    expected.update(f"chunks-{i}-{kind}" for i in range(3) for kind in ("state", "output"))
++    if len(rows) != len(expected) or {r["case"] for r in rows} != expected:
++        return "INCOMPLETE"
++    if set(negative_controls) != {"wrong-prefix-state", "one-bit-state-corruption"}:
++        return "INCOMPLETE"
++    if not all(negative_controls.values()):
++        return "INVALID_CHECKER"
++    return "TESTED" if all(r["equal"] for r in rows) else "FAILED"
++
++
++def replay(args):
++    import torch
++    from analyze_gdn_decode_transition import array
++    from probe_gdn_beta_precision import validate_capture
++    from stock_gdn_sequence import native_sequence
++
++    stock_call, _, _ = validate_capture(args.capture)
++    stock = native_sequence(args.contract, args.compiled_root, args.stock_source, args.op_source)
++    serial = native_sequence(args.contract, args.compiled_root, args.stock_source, args.op_source)
++    if args.candidate == "scan":
++        from stock_gdn_scan import StockScan
++
++        stock = StockScan(torch, stock.device)
++    device = stock.device
++
++    def tensor(value, dtype):
++        return torch.from_numpy(value.copy()).to(device=device, dtype=dtype)
++
++    def raw(name):
++        return array(stock_call / "before", "kwargs." + name)
++
++    initial = tensor(raw("initial_state.selected_values")[0], torch.float32)
++    a_log = tensor(raw("A_log"), torch.float32)
++    dt_bias = tensor(raw("dt_bias"), torch.bfloat16)
++    # Row zero reproduces the captured transition exactly. Later rows are
++    # deterministic synthetic continuations of these operator inputs.
++    rng = np.random.default_rng(1701)
++    values = []
++    for name in ("mixed_qkv", "a", "b"):
++        base = raw(name).astype(np.float32)
++        repeated = np.repeat(base, 8, axis=0)
++        repeated[1:] += rng.normal(0, 0.03125, repeated[1:].shape).astype(np.float32)
++        values.append(tensor(repeated, torch.bfloat16))
++    qkv, a, b = values
++    expected_state = tensor(
++        array(stock_call / "after", "kwargs.initial_state.selected_values")[0], torch.float32
++    )
++    expected_output = tensor(array(stock_call / "after", "kwargs.out")[0, 0], torch.bfloat16)
++    rows = []
++
++    def check(label, actual, expected):
++        rows.append(compare_tensors(label, actual, expected, args.output))
++
++    first = stock.run(initial, qkv[:1], a[:1], b[:1], a_log, dt_bias)
++    check("captured-stock-state", first.final_state, expected_state)
++    check("captured-stock-output", first.outputs[0], expected_output)
++    if not all(r["equal"] for r in rows):
++        return rows, {}, "captured stock control did not reproduce"
++
++    batch = stock.d7(initial, qkv, a, b, a_log, dt_bias)
++    state = initial
++    serial_outputs = []
++    for accepted in range(8):
++        stop = accepted + 1
++        part = serial.run(
++            state, qkv[accepted:stop], a[accepted:stop], b[accepted:stop], a_log, dt_bias
++        )
++        state = part.final_state
++        serial_outputs.append(part.outputs)
++        check(f"accept-{accepted}-state", batch.accepted_state(accepted), state)
++        check(f"accept-{accepted}-output", batch.outputs[:stop], torch.cat(serial_outputs))
++    for accepted in range(7):
++        poisoned = [value.clone() for value in (qkv, a, b)]
++        for value in poisoned:
++            value[accepted + 1 :] = -3
++        other = stock.d7(initial, *poisoned, a_log, dt_bias)
++        check(
++            f"suffix-{accepted}-state",
++            other.accepted_state(accepted),
++            batch.accepted_state(accepted),
++        )
++        check(
++            f"suffix-{accepted}-output",
++            other.outputs[: accepted + 1],
++            batch.outputs[: accepted + 1],
++        )
++    for index, sizes in enumerate(((1,) * 8, (2, 3, 3), (0, 3, 0, 5, 0))):
++        state, start, outputs = initial, 0, []
++        for size in sizes:
++            stop = start + size
++            part = stock.run(state, qkv[start:stop], a[start:stop], b[start:stop], a_log, dt_bias)
++            state, start = part.final_state, stop
++            outputs.append(part.outputs)
++        check(f"chunks-{index}-state", state, batch.final_state)
++        check(f"chunks-{index}-output", torch.cat(outputs), batch.outputs)
++
++    wrong = compare_tensors(
++        "negative-wrong-prefix-state", batch.accepted_state(1), batch.accepted_state(0), args.output
++    )
++    damaged = batch.accepted_state(0).cpu()
++    damaged.view(torch.uint8).reshape(-1)[0] ^= 1
++    corrupt = compare_tensors(
++        "negative-one-bit-state-corruption", damaged, batch.accepted_state(0), args.output
++    )
++    controls = {
++        "wrong-prefix-state": not wrong["equal"],
++        "one-bit-state-corruption": not corrupt["equal"],
++    }
++    return rows, controls, None
++
++
++def main(args):
++    if not args.allow_gpu:
++        raise DiagnosticError("stock GDN native replay requires explicit --allow-gpu")
++    if not os.environ.get("QWEN_CONFORMANCE_GPU_LOCK"):
++        raise DiagnosticError("stock GDN native replay requires the shared GPU lease")
++    from qwen_r9700_lab.conformance_gpu_lease import gpu_lease
++
++    os.umask(0o077)
++    args.output.mkdir(mode=0o700)
++    started = time.monotonic()
++    rows, controls, error = [], {}, None
++    try:
++        with gpu_lease(args.output / "gpu-lease"):
++            rows, controls, error = replay(args)
++    except Exception as exception:
++        error = f"{type(exception).__name__}: {exception}"
++    status = "FAILED" if error else classify(rows, controls)
++    report = seal(
++        {
++            "schema": "urn:qwen:stock-gdn-sequence-probe:v1",
++            "status": status,
++            "scope": "One retained stock transition and synthetic eight-row operator sequences.",
++            "checks": rows,
++            "negative_controls": controls,
++            "error": error,
++            "contract": json.loads(args.contract.read_text())["sha256"],
++            "probe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
++            "candidate_sha256": hashlib.sha256(
++                Path(__file__)
++                .with_name(
++                    "stock_gdn_scan.py" if args.candidate == "scan" else "stock_gdn_sequence.py"
++                )
++                .read_bytes()
++            ).hexdigest(),
++            "candidate": args.candidate,
++            "kernel_sha256": (
++                hashlib.sha256(
++                    Path(__file__).with_name("stock_gdn_scan_kernel.py").read_bytes()
++                ).hexdigest()
++                if args.candidate == "scan"
++                else None
++            ),
++            "wall_seconds_including_diagnostics": time.monotonic() - started,
++            "performance_benchmark": False,
++            "full_model_equivalence": "UNPROVED",
++            "formal_equivalence": "UNPROVED",
++            "installed_backend_changed": False,
++            "baseline_matrix_changed": False,
++        }
++    )
++    write_private(args.output / "probe-result.json", report)
++    print(
++        json.dumps({"status": status, "checks": len(rows), "sha256": report["sha256"]}), flush=True
++    )
++    return 0 if status == "TESTED" else 2
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--capture", type=Path, required=True)
++    parser.add_argument("--contract", type=Path, required=True)
++    parser.add_argument("--compiled-root", type=Path, required=True)
++    parser.add_argument("--stock-source", type=Path, required=True)
++    parser.add_argument("--op-source", type=Path, required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    parser.add_argument("--allow-gpu", action="store_true", required=True)
++    parser.add_argument("--candidate", choices=("oracle", "scan"), default="oracle")
++    raise SystemExit(main(parser.parse_args()))
+diff --git a/experimental/serial_gdn_contract/reference-contract.json b/experimental/serial_gdn_contract/reference-contract.json
+new file mode 100644
+index 0000000..bd6ceae
+--- /dev/null
++++ b/experimental/serial_gdn_contract/reference-contract.json
+@@ -0,0 +1,152 @@
++{
++  "schema": "urn:qwen:gdn-arithmetic-contract:v1",
++  "id": "stock-packed-gdn-m1-gfx1201-v1",
++  "scope": "GDN core from raw convolution Q/K/V and gate projections to output plus recurrent state; other operators have separate contracts.",
++  "status": "DECLARED; native cross-mode equivalence UNPROVED",
++  "selection": "Pinned stock vLLM packed single-token GDN, applied causally to each materialized token. R4D and NumPy remain separately identified implementations.",
++  "domain": {
++    "query_heads": 16,
++    "value_heads": 48,
++    "key_width": 128,
++    "value_width": 128,
++    "batch_sequences": 1,
++    "qkv_width": 10240,
++    "state_order": [
++      "head",
++      "value",
++      "key"
++    ],
++    "state_elements": 786432,
++    "inputs": "Finite BF16 Q/K/V, a, b, dt_bias; finite FP32 A_log and initial state. Invalid geometry, aliasing, nonfinite output/state or incomplete evidence fails closed."
++  },
++  "precision": {
++    "qkv": "BF16 widened exactly to FP32",
++    "a_b_dt_bias": "BF16 widened exactly to FP32",
++    "A_log": "FP32",
++    "qk_normalization": "FP32 throughout; no intermediate BF16 cast",
++    "beta": "sigmoid in the pinned FP32 kernel, then BF16 round-to-nearest ties-even, then exact FP32 widening",
++    "decay_gate": "FP32",
++    "recurrent_state": "FP32 on every read, update and committed write",
++    "output": "BF16 round-to-nearest ties-even"
++  },
++  "operations": [
++    {
++      "name": "normalize",
++      "formula": "n(x) = x / sqrt(sum(x_i*x_i) + float32(1e-6))",
++      "arithmetic": "Pinned compiled reduction, square root and division. No replacement with a differently rounded reciprocal-square-root multiply."
++    },
++    {
++      "name": "scale_query",
++      "formula": "q = float32(n(Q) * float32(128**-0.5)); k = n(K)",
++      "arithmetic": "Scale q before the output dot product; not after it."
++    },
++    {
++      "name": "gates",
++      "formula": "x = float32(a + dt_bias); softplus = x if x > 20 else log(1 + exp(x)); g = -exp(A_log)*softplus; beta = widen(BF16_RNE(sigmoid(b)))",
++      "arithmetic": "The pinned kernel intrinsics and their compiled implementations define rounding. No cumulative-gate reconstruction or future-dependent fallback."
++    },
++    {
++      "name": "decay",
++      "formula": "D = float32(exp(g)*S)"
++    },
++    {
++      "name": "prediction",
++      "formula": "p = dot_stock(D,k)"
++    },
++    {
++      "name": "residual",
++      "formula": "r = float32(float32(v-p)*beta)"
++    },
++    {
++      "name": "state",
++      "formula": "S_next = update_stock(D,r,k)",
++      "arithmetic": "Retain the compiled multiply-add contraction; separate multiply/add is a different numerical path."
++    },
++    {
++      "name": "output",
++      "formula": "o = BF16_RNE(dot_stock(S_next,q))"
++    }
++  ],
++  "arithmetic_authority": {
++    "kind": "pinned-native-executable",
++    "note": "Real-number formulae describe dataflow. Exact finite-precision results are defined by the retained kernel artifact and packing below, under the declared compiler/hardware assumptions. Source inspection or matching hashes is not proof of runtime dispatch or functional correctness.",
++    "kernel": "fused_recurrent_gated_delta_rule_packed_decode_kernel",
++    "source": {
++      "fused_recurrent.py": "00a3b971b0dbb6ed26e246970a0e1a21a9a174030974685bdd3f0c8ab5fb4bfe",
++      "fla_op.py": "456da84fd12411cf53c96a90dd4f78f49afb454c3d51d2c524ea8e7106fe8ae5"
++    },
++    "cache_entry": "XW6RXQHLHKDBX2FF2LE7HICYZGQCSR5L4HJZ7USZF4L2FZQULJTQ",
++    "files": {
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.source": "f47615b4e3c0a4136cb3d5f7e526f222c8609e73dff2d89111c34ba1745ac1a7",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.ttir": "0333349d4ff544078a5d35354a5ca42d7fe37360af7ce188d9778dba7887aabf",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.ttgir": "889064969acdafd8931d3d7ae02e5b0ce98fdb80ac1f9df9fb919b5259c2645c",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.llir": "eb6f3975ed77e9f0b53975d1d1c0739abdba06813e64bea8aa6f66baeadd19f2",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.amdgcn": "f07d71ae362c0e87633253a85c2571e0ac626ff8b520034e16b554687ec4e1a1",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.hsaco": "9feeb930b8635122c552ad727fbe897d0854332f9a7880468662b9ed83350135",
++      "fused_recurrent_gated_delta_rule_packed_decode_kernel.json": "de1084d3b9e844ded01cd70f866eda11618a6e95e1471b0ccc0f295921c96fad"
++    },
++    "target": {
++      "backend": "hip",
++      "arch": "gfx1201",
++      "warp_size": 32
++    },
++    "compiler": {
++      "triton_version": "3.7.1",
++      "num_warps": 1,
++      "num_stages": 3,
++      "enable_fp_fusion": true,
++      "allow_flush_denorm": false,
++      "sanitize_overflow": true
++    },
++    "environment": {
++      "FLA_USE_FAST_OPS": "0"
++    },
++    "packing": {
++      "query_heads": 16,
++      "value_heads": 48,
++      "K": 128,
++      "V": 128,
++      "BK": 128,
++      "BV": 32,
++      "state_token_stride": 802816,
++      "a_token_stride": 96,
++      "b_token_stride": 96,
++      "index_stride": 1,
++      "state_slot": 1,
++      "grid": [
++        4,
++        48
++      ],
++      "scale_fp32_hex": "f304b53d",
++      "note": "Single row makes the packed-QKV row stride irrelevant to this invocation. Reject or separately qualify other physical packing; physical block numbers are not semantic state."
++    }
++  },
++  "execution_modes": {
++    "m1": "One invocation F(S,u) with exactly one materialized input token.",
++    "prefill": "Ordered fold of that same F over tokens. Empty segment is the identity. Every intermediate prefix must match.",
++    "d7": "Verification rows are u[0]=previously emitted pending token, u[1:8]=seven proposals. For accepted proposal count k in 0..7, commit the state after rows 0..k (k+1 processed rows); the newly emitted correction/bonus token stays pending.",
++    "rollback": "Rejected rows cannot affect committed GDN state, convolution history, KV, positions or events. The GDN-only contract does not certify those other components.",
++    "snapshot": "Persist the contract identity with state; do not treat states created under a different arithmetic contract as interchangeable without checking or rebuilding."
++  },
++  "obligations": {
++    "partition": "fold(F,S,A+B) == fold(F,fold(F,S,A).state,B) for outputs and state, including empty segments",
++    "causal_prefix": "Changing inputs after prefix p leaves every output/state through p byte-identical.",
++    "accepted_prefix": "D7_commit(S,u,k) == fold(F,S,u[:k+1]).state with a separate pending-token field.",
++    "exactness": "Compare BF16 output bits and every FP32 logical-state bit; hashes and error tolerances alone do not establish equality."
++  },
++  "separate_targets": {
++    "numpy-serial-fp32-v1": "Independent canonical model. It rounds normalized Q/K to BF16, uses ordered non-fused reductions and scales the final output dot. It is not relabelled as this stock kernel.",
++    "r4d-unfused-m1": "Retains FP32 beta, uses its own reduction/normalization intrinsics, disables FMA and rounds output ties away. Existing prefill candidate targets this path, not this contract.",
++    "huggingface-fallback": "The pinned Transformers fallback also returns BF16 beta, but its normalization and framework reductions differ. Full bit equality with it is UNPROVED."
++  },
++  "required_qualification": [
++    "Reproduce the preserved stock first transition exactly with the selected invocation packing.",
++    "Compare repaired prefill/M1/D7 against this oracle from equal independent initial state.",
++    "Exercise every accepted width, all-prefix equality, future-suffix mutations, padding, nonzero state, extreme gates and BF16 halfway boundaries.",
++    "Then qualify graph execution, full-model logits/state, snapshots and long contexts; benchmark separately."
++  ],
++  "production_changed": false,
++  "existing_matrix_contract_changed": false,
++  "native_repair_qualified": false,
++  "sha256": "d8149b00210c94acfca4f1f66030de302dcaf8155894de6a23d3f4b76da61e00"
++}
+diff --git a/experimental/serial_gdn_contract/stock_gdn_convolution_adapter.py b/experimental/serial_gdn_contract/stock_gdn_convolution_adapter.py
+new file mode 100644
+index 0000000..c07742c
+--- /dev/null
++++ b/experimental/serial_gdn_contract/stock_gdn_convolution_adapter.py
+@@ -0,0 +1,76 @@
++"""Use the corrected stock convolution for speculative rows as well as M1.
++
++The R4D conversion rounds BF16 midpoints away from zero; stock uses nearest
++even. Sharing the stock operation also shares its SiLU and FP32 accumulation.
++This adapter preserves Radiance's raw-input and speculative-history ABI.
++"""
++
++from qwen_r9700_lab.diagnostic_contract import DiagnosticError
++
++
++class StockConvolutionAdapter:
++    def __init__(self, torch, update):
++        self.torch = torch
++        self.update = update
++        self.calls = 0
++
++    def __call__(
++        self,
++        x,
++        weight,
++        bias,
++        history,
++        state_len,
++        indices,
++        accepted,
++        cu,
++        num_seqs,
++        tokens,
++        heads,
++        query_heads,
++        max_query_len,
++    ):
++        t = self.torch
++        channels = (2 * query_heads + heads) * 128
++        if (
++            num_seqs != 1
++            or heads != 48
++            or query_heads != 16
++            or not 1 <= max_query_len <= 8
++            or not 1 <= tokens <= max_query_len
++            or state_len != 3 + max_query_len - 1
++            or tuple(x.shape) != (tokens, channels)
++            or tuple(weight.shape) != (channels, 4)
++            or history.ndim != 3
++            or tuple(history.shape[1:]) != (channels, state_len)
++            or x.dtype != t.bfloat16
++            or weight.dtype != t.bfloat16
++            or history.dtype != t.bfloat16
++            or tuple(indices.shape) != (1,)
++            or tuple(cu.shape) != (2,)
++            or bias is not None
++        ):
++            raise DiagnosticError("unsupported stock convolution diagnostic invocation")
++        output = t.empty_like(x)
++        result = self.update(
++            x,
++            history,
++            weight,
++            None,
++            "silu",
++            conv_state_indices=indices,
++            num_accepted_tokens=accepted,
++            query_start_loc=cu,
++            max_query_len=max_query_len,
++            validate_data=False,
++            out=output,
++        )
++        if result is not output:
++            raise DiagnosticError("stock convolution did not retain the supplied output")
++        q, k, v = result.split((query_heads * 128, query_heads * 128, heads * 128), dim=-1)
++        self.calls += 1
++        return (
++            q.contiguous().view(tokens, query_heads, 128),
++            k.contiguous().view(tokens, query_heads, 128),
++            v.contiguous().view(tokens, heads, 128),
++        )
+diff --git a/experimental/serial_gdn_contract/stock_gdn_indexed_adapter.py b/experimental/serial_gdn_contract/stock_gdn_indexed_adapter.py
+new file mode 100644
+index 0000000..07e7c35
+--- /dev/null
++++ b/experimental/serial_gdn_contract/stock_gdn_indexed_adapter.py
+@@ -0,0 +1,124 @@
++"""Stock-arithmetic speculative GDN with device-side acceptance and state writes.
++
++There are no synchronizing tensor-to-host reads, per-row launches or state
++copies. Metadata validation remains the dispatcher's obligation, just as for
++the original R4D entry point; qualification exercises that obligation separately.
++"""
++
++from qwen_r9700_lab.diagnostic_contract import DiagnosticError
++
++
++class StockIndexedAdapter:
++    def __init__(self, torch):
++        self.torch = torch
++        self.calls = 0
++        self.rows = 0
++
++    def __call__(
++        self,
++        q,
++        k,
++        v,
++        a,
++        b,
++        a_log,
++        dt_bias,
++        state,
++        output,
++        cu,
++        indices,
++        accepted,
++        num_seqs,
++        heads,
++        query_heads,
++        scale,
++        z_gate=None,
++        norm=None,
++    ):
++        t = self.torch
++        count = q.shape[0]
++        if (
++            heads != 48
++            or query_heads != 16
++            or scale != 128**-0.5
++            or z_gate is not None
++            or norm is not None
++            or num_seqs < 1
++            or indices.ndim != 2
++            or indices.shape[0] != num_seqs
++            or not 1 <= indices.shape[1] <= 8
++            or cu.shape != (num_seqs + 1,)
++            or accepted is None
++            or accepted.shape != (num_seqs,)
++            or state.ndim != 4
++            or tuple(state.shape[1:]) != (48, 128, 128)
++            or state.dtype != t.float32
++            or state.stride()[1:] != (16384, 128, 1)
++            or a_log.shape != (48,)
++            or a_log.dtype != t.float32
++            or dt_bias.shape != (48,)
++            or dt_bias.dtype != t.float32
++            or any(x.dtype != t.int32 for x in (cu, indices, accepted))
++        ):
++            raise DiagnosticError("unsupported indexed stock GDN invocation")
++        for x, shape in (
++            (q, (count, 16, 128)),
++            (k, (count, 16, 128)),
++            (v, (count, 48, 128)),
++            (output, (count, 48, 128)),
++        ):
++            if tuple(x.shape) != shape or x.dtype != t.bfloat16 or not x.is_contiguous():
++                raise DiagnosticError("unsupported indexed stock GDN QKV/output layout")
++        if any(
++            x.shape[0] < count or x.shape[1:] != (48,) or x.dtype != t.bfloat16 or x.stride(-1) != 1
++            for x in (a, b)
++        ):
++            raise DiagnosticError("unsupported indexed stock GDN gate layout")
++        if any(
++            x.device != q.device
++            for x in (k, v, a, b, a_log, dt_bias, state, output, cu, indices, accepted)
++        ):
++            raise DiagnosticError("indexed stock GDN tensors must share a device")
++        if q.device.type != "cuda":
++            raise DiagnosticError("indexed stock GDN requires a GPU")
++        from stock_gdn_scan_kernel import stock_gdn_scan_kernel
++
++        packed = t.cat((q.flatten(1), k.flatten(1), v.flatten(1)), dim=1)
++        # The native ABI widens a read-only BF16 parameter. Round back to the
++        # declared input type before entering the same stock transition.
++        bias = dt_bias.to(t.bfloat16)
++        stock_gdn_scan_kernel[(4, 48, num_seqs)](
++            packed,
++            a,
++            b,
++            a_log,
++            bias,
++            state,
++            output,
++            state,
++            indices,
++            accepted,
++            cu,
++            count,
++            scale,
++            packed.stride(0),
++            a.stride(0),
++            b.stride(0),
++            H=16,
++            HV=48,
++            K=128,
++            V=128,
++            BK=128,
++            BV=32,
++            SAVE_ROWS=True,
++            INDEXED=True,
++            stride_state=state.stride(0),
++            stride_index_seq=indices.stride(0),
++            stride_index_row=indices.stride(1),
++            num_warps=1,
++            num_stages=3,
++            enable_fp_fusion=True,
++            allow_flush_denorm=False,
++        )
++        self.calls += 1
++        self.rows += count
+diff --git a/experimental/serial_gdn_contract/stock_gdn_prefill_adapter.py b/experimental/serial_gdn_contract/stock_gdn_prefill_adapter.py
+new file mode 100644
+index 0000000..3bbc323
+--- /dev/null
++++ b/experimental/serial_gdn_contract/stock_gdn_prefill_adapter.py
+@@ -0,0 +1,79 @@
++"""Experimental causal prefill using the same stock transition as decode.
++
++Admits one prefill sequence. This bypasses cumulative gate subtraction and
++future-dependent whole-chunk fallbacks. Unsupported mixed batches fail
++explicitly in qualification instead of silently reverting to different math.
++"""
++
++from qwen_r9700_lab.diagnostic_contract import DiagnosticError
++
++
++class StockPrefillAdapter:
++    def __init__(self, torch, native, convolution, scan, original):
++        self.torch = torch
++        self.native = native
++        self.convolution = convolution
++        self.scan = scan
++        self.original = original
++        self.calls = 0
++        self.rows = 0
++
++    def __call__(self, layer, mixed_qkv, b, a, core_attn_out):
++        plan = self.native._plan(layer, mixed_qkv, b, a, core_attn_out)
++        if plan is None or plan[0] == "decode":
++            return self.original(layer, mixed_qkv, b, a, core_attn_out)
++        kind, count, conv_state, ssm_state, md, (_, cu) = plan
++        if kind != "prefill" or md.num_prefills != 1:
++            raise DiagnosticError("stock prefill qualification requires one unmixed sequence")
++        t = self.torch
++        if (
++            mixed_qkv.shape[1:] != (10240,)
++            or mixed_qkv.dtype != t.bfloat16
++            or layer.A_log.dtype != t.float32
++            or layer.dt_bias.dtype != t.bfloat16
++            or layer.conv1d.bias is not None
++            or tuple(md.prefill_state_indices.shape) != (1,)
++            or tuple(md.prefill_has_initial_state.shape) != (1,)
++            or md.has_initial_state is None
++            or tuple(md.has_initial_state.shape) != (1,)
++        ):
++            raise DiagnosticError("unsupported stock prefill metadata or arithmetic")
++        conv_ids = md.non_spec_state_indices_tensor
++        if conv_ids.ndim == 2:
++            conv_ids = conv_ids[:, 0]
++        if conv_ids.shape != (1,):
++            raise DiagnosticError("stock prefill requires one convolution state index")
++        # Use the original convolution/state address maps, retaining unrelated
++        # slots and selecting zero history only for a fresh sequence.
++        old_conv = conv_state.index_select(0, conv_ids.long())
++        conv_state.index_copy_(
++            0,
++            conv_ids.long(),
++            t.where(md.has_initial_state[:, None, None], old_conv, t.zeros_like(old_conv)),
++        )
++        selected = ssm_state.index_select(0, md.prefill_state_indices.long())
++        initial = t.where(
++            md.prefill_has_initial_state[:, None, None, None], selected, t.zeros_like(selected)
++        )[0].contiguous()
++        source = mixed_qkv[:count]
++        packed = t.empty_like(source)
++        weights = layer.conv1d.weight.view(10240, 4)
++        self.convolution(
++            source,
++            conv_state,
++            weights,
++            None,
++            "silu",
++            conv_state_indices=conv_ids,
++            query_start_loc=cu,
++            max_query_len=count,
++            validate_data=False,
++            out=packed,
++        )
++        result = self.scan.run(initial, packed, a[:count], b[:count], layer.A_log, layer.dt_bias)
++        core_attn_out[:count].view(count, 48, 128).copy_(result.outputs)
++        ssm_state.index_copy_(0, md.prefill_state_indices.long(), result.final_state.unsqueeze(0))
++        layer.__dict__.pop("_radiance_z", None)
++        self.calls += 1
++        self.rows += count
++        return True
+diff --git a/experimental/serial_gdn_contract/stock_gdn_recurrent_adapter.py b/experimental/serial_gdn_contract/stock_gdn_recurrent_adapter.py
+new file mode 100644
+index 0000000..269d413
+--- /dev/null
++++ b/experimental/serial_gdn_contract/stock_gdn_recurrent_adapter.py
+@@ -0,0 +1,141 @@
++"""Diagnostic Radiance recurrent-call adapter for the pinned stock GDN fold.
++
++Admits one unfused sequence of one through eight rows. It computes privately
++before copying verified results into the diagnostic worker's state pool. It is
++not installed in production and does not claim graph or concurrent support.
++"""
++
++from __future__ import annotations
++
++import math
++
++from qwen_r9700_lab.diagnostic_contract import DiagnosticError
++
++
++class StockRecurrentAdapter:
++    def __init__(self, torch, sequence):
++        self.torch = torch
++        self.sequence = sequence
++        self.calls = 0
++        self.rows = 0
++
++    def __call__(
++        self,
++        q,
++        k,
++        v,
++        a,
++        b,
++        A_log,  # noqa: N803 - preserve the intercepted Radiance call ABI
++        dt_bias,
++        ssm_state,
++        o,
++        cu,
++        sidx,
++        num_accepted,
++        num_seqs,
++        H,  # noqa: N803 - preserve the intercepted Radiance call ABI
++        Hg,  # noqa: N803 - preserve the intercepted Radiance call ABI
++        scale,
++        z_gate=None,
++        norm=None,
++    ):
++        t = self.torch
++        if num_seqs != 1 or H != 48 or Hg != 16 or z_gate is not None or norm is not None:
++            raise DiagnosticError(
++                "stock recurrent diagnostic requires one unfused 48/16-head sequence"
++            )
++        if not math.isfinite(scale) or scale != 128**-0.5:
++            raise DiagnosticError("stock recurrent diagnostic requires the pinned query scale")
++        tensors = (q, k, v, a, b, A_log, dt_bias, ssm_state, o, cu, sidx)
++        if not all(isinstance(x, t.Tensor) and x.device == self.sequence.device for x in tensors):
++            raise DiagnosticError("stock recurrent diagnostic tensors must share the oracle device")
++        if q.ndim != 3 or not 1 <= q.shape[0] <= 8:
++            raise DiagnosticError("stock recurrent diagnostic admits one through eight rows")
++        count = q.shape[0]
++        for x, shape in (
++            (q, (count, 16, 128)),
++            (k, (count, 16, 128)),
++            (v, (count, 48, 128)),
++            (o, (count, 48, 128)),
++        ):
++            if tuple(x.shape) != shape or x.dtype != t.bfloat16:
++                raise DiagnosticError(
++                    "stock recurrent diagnostic QKV/output representation changed"
++                )
++        if (
++            any(
++                x.ndim != 2 or x.shape[0] < count or x.shape[1] != 48 or x.dtype != t.bfloat16
++                for x in (a, b)
++            )
++            or A_log.shape != (48,)
++            or A_log.dtype != t.float32
++            or dt_bias.shape != (48,)
++            or dt_bias.dtype != t.float32
++            or ssm_state.ndim != 4
++            or tuple(ssm_state.shape[1:]) != (48, 128, 128)
++            or ssm_state.dtype != t.float32
++        ):
++            raise DiagnosticError("stock recurrent diagnostic gate/state representation changed")
++        if cu.shape != (2,) or cu.dtype != t.int32 or cu.tolist() != [0, count]:
++            raise DiagnosticError("stock recurrent diagnostic sequence boundaries changed")
++        if sidx.ndim != 2 or sidx.shape[0] != 1 or sidx.shape[1] < count or sidx.dtype != t.int32:
++            raise DiagnosticError("stock recurrent diagnostic state map changed")
++        if num_accepted is None:
++            accepted = 1
++        elif (
++            isinstance(num_accepted, t.Tensor)
++            and num_accepted.device == self.sequence.device
++            and num_accepted.dtype == t.int32
++            and num_accepted.shape == (1,)
++        ):
++            accepted = int(num_accepted.item())
++        else:
++            raise DiagnosticError("stock recurrent diagnostic acceptance metadata changed")
++        if not 1 <= accepted <= sidx.shape[1]:
++            raise DiagnosticError(
++                "stock recurrent diagnostic previous acceptance outside state map"
++            )
++        initial_slot = int(sidx[0, accepted - 1].item())
++        destinations = [int(x) for x in sidx[0, :count].tolist()]
++        if (
++            not all(0 < x < ssm_state.shape[0] for x in [initial_slot, *destinations])
++            or len(set(destinations)) != count
++        ):
++            raise DiagnosticError("stock recurrent diagnostic invalid or aliased state slots")
++        rounded_bias = dt_bias.to(t.bfloat16)
++        if not t.equal(rounded_bias.float().view(t.uint8), dt_bias.contiguous().view(t.uint8)):
++            raise DiagnosticError("FP32 bias is not an exact widening of the stock BF16 bias")
++        packed = t.cat((q.reshape(count, -1), k.reshape(count, -1), v.reshape(count, -1)), dim=1)
++        # Clone the old committed state before touching any speculative slot.
++        initial = ssm_state[initial_slot].clone()
++        result = self.sequence.run(
++            initial,
++            packed,
++            a[:count],
++            b[:count],
++            A_log,
++            rounded_bias,
++            retain_rows=range(count),
++        )
++        if result.rows != count or set(result.after_rows) != set(range(count)):
++            raise DiagnosticError("stock recurrent diagnostic returned an incomplete sequence")
++        # Validate every tentative result before publishing any part of it.
++        values = [result.outputs, *result.after_rows.values()]
++        if (
++            tuple(result.outputs.shape) != (count, 48, 128)
++            or result.outputs.dtype != t.bfloat16
++            or any(
++                tuple(x.shape) != (48, 128, 128) or x.dtype != t.float32
++                for x in result.after_rows.values()
++            )
++            or any(
++                x.device != self.sequence.device or not bool(t.isfinite(x).all()) for x in values
++            )
++        ):
++            raise DiagnosticError("stock recurrent diagnostic returned invalid tentative values")
++        for row, slot in enumerate(destinations):
++            ssm_state[slot].copy_(result.after_rows[row])
++        o.copy_(result.outputs)
++        self.calls += 1
++        self.rows += count
+diff --git a/experimental/serial_gdn_contract/stock_gdn_scan.py b/experimental/serial_gdn_contract/stock_gdn_scan.py
+new file mode 100644
+index 0000000..c56bc90
+--- /dev/null
++++ b/experimental/serial_gdn_contract/stock_gdn_scan.py
+@@ -0,0 +1,98 @@
++"""One-launch candidate for the declared stock M1 GDN arithmetic contract.
++
++Importing this module does not initialize a GPU. This remains an experimental
++operator until native comparisons and full-model qualification succeed.
++"""
++
++from qwen_r9700_lab.diagnostic_contract import DiagnosticError
++
++
++def retained_rows(rows, keep):
++    keep = tuple(keep)
++    if any(type(i) is not int or not 0 <= i < rows for i in keep):
++        raise DiagnosticError("retained GDN row is outside the sequence")
++    if len(set(keep)) != len(keep):
++        raise DiagnosticError("duplicate retained GDN row")
++    return keep
++
++
++class StockScan:
++    def __init__(self, torch, device):
++        self.torch = torch
++        self.device = torch.device(device)
++
++    def run(self, initial, mixed_qkv, a, b, a_log, dt_bias, *, retain_rows=()):
++        from stock_gdn_sequence import SequenceResult
++
++        t = self.torch
++        if not isinstance(mixed_qkv, t.Tensor) or mixed_qkv.ndim != 2:
++            raise DiagnosticError("stock scan requires packed QKV rows")
++        rows = mixed_qkv.shape[0]
++        keep = retained_rows(rows, retain_rows)
++        for x, shape, dtype in (
++            (initial, (48, 128, 128), t.float32),
++            (mixed_qkv, (rows, 10240), t.bfloat16),
++            (a, (rows, 48), t.bfloat16),
++            (b, (rows, 48), t.bfloat16),
++            (a_log, (48,), t.float32),
++            (dt_bias, (48,), t.bfloat16),
++        ):
++            if (
++                not isinstance(x, t.Tensor)
++                or tuple(x.shape) != shape
++                or x.dtype != dtype
++                or x.device != self.device
++                or x.stride(-1) != 1
++            ):
++                raise DiagnosticError("unsupported stock scan tensor representation")
++        if not initial.is_contiguous():
++            raise DiagnosticError("stock scan requires contiguous logical initial state")
++        outputs = t.empty((rows, 48, 128), dtype=t.bfloat16, device=self.device)
++        if rows == 0:
++            return SequenceResult(outputs, initial.clone(), {}, 0)
++        if self.device.type != "cuda":
++            raise DiagnosticError("stock scan native execution requires a GPU")
++        from stock_gdn_scan_kernel import stock_gdn_scan_kernel
++
++        # Prefill writes only its final state. D7 retains each after-row state;
++        # the caller chooses the accepted prefix, never the final proposed row.
++        states = t.empty((rows if keep else 1, 48, 128, 128), dtype=t.float32, device=self.device)
++        stock_gdn_scan_kernel[(4, 48)](
++            mixed_qkv,
++            a,
++            b,
++            a_log,
++            dt_bias,
++            initial,
++            outputs,
++            states,
++            None,
++            None,
++            None,
++            rows,
++            128**-0.5,
++            mixed_qkv.stride(0),
++            a.stride(0),
++            b.stride(0),
++            H=16,
++            HV=48,
++            K=128,
++            V=128,
++            BK=128,
++            BV=32,
++            SAVE_ROWS=bool(keep),
++            INDEXED=False,
++            stride_state=0,
++            stride_index_seq=0,
++            stride_index_row=0,
++            num_warps=1,
++            num_stages=3,
++            enable_fp_fusion=True,
++            allow_flush_denorm=False,
++        )
++        return SequenceResult(outputs, states[-1], {i: states[i] for i in keep}, rows)
++
++    def d7(self, initial, mixed_qkv, a, b, a_log, dt_bias):
++        if tuple(mixed_qkv.shape) != (8, 10240):
++            raise DiagnosticError("D7 requires the pending input plus seven proposals")
++        return self.run(initial, mixed_qkv, a, b, a_log, dt_bias, retain_rows=range(8))
+diff --git a/experimental/serial_gdn_contract/stock_gdn_scan_kernel.py b/experimental/serial_gdn_contract/stock_gdn_scan_kernel.py
+new file mode 100644
+index 0000000..8e8119b
+--- /dev/null
++++ b/experimental/serial_gdn_contract/stock_gdn_scan_kernel.py
+@@ -0,0 +1,115 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++# SPDX-FileCopyrightText: Songlin Yang, Yu Zhang
++#
++# The transition body is derived from flash-linear-attention's packed GDN
++# decode in vLLM (original MIT notice: Copyright (c) 2023-2025, Songlin Yang,
++# Yu Zhang). Keep the transition's rounding and reduction expressions intact.
++# ruff: noqa: N803, N806 - retain the stock Triton argument names for review
++"""Ordered stock GDN transition; experimental until native qualification passes.
++
++Each program owns one disjoint 32-by-128 state tile throughout the sequence.
++The loop has no access to future gates. Only the chosen after-row states are
++published, so rejected speculative rows cannot change earlier snapshots.
++"""
++
++from vllm.third_party.flash_linear_attention.ops.op import exp
++from vllm.triton_utils import tl, triton
++
++
++@triton.jit(do_not_specialize=["T"])
++def stock_gdn_scan_kernel(
++    mixed_qkv,
++    a,
++    b,
++    A_log,
++    dt_bias,
++    initial,
++    output,
++    states,
++    indices,
++    accepted,
++    cu,
++    T,
++    scale,
++    stride_qkv: tl.constexpr,
++    stride_a: tl.constexpr,
++    stride_b: tl.constexpr,
++    H: tl.constexpr,
++    HV: tl.constexpr,
++    K: tl.constexpr,
++    V: tl.constexpr,
++    BK: tl.constexpr,
++    BV: tl.constexpr,
++    SAVE_ROWS: tl.constexpr,
++    INDEXED: tl.constexpr,
++    stride_state: tl.constexpr,
++    stride_index_seq: tl.constexpr,
++    stride_index_row: tl.constexpr,
++):
++    i_v, i_hv = tl.program_id(0), tl.program_id(1)
++    sequence = tl.program_id(2)
++    i_h = i_hv // (HV // H)
++    o_k = tl.arange(0, BK)
++    o_v = i_v * BV + tl.arange(0, BV)
++    mask_k = o_k < K
++    mask_v = o_v < V
++    mask_h = mask_v[:, None] & mask_k[None, :]
++    offsets = i_hv * V * K + o_v[:, None] * K + o_k[None, :]
++    if INDEXED:
++        begin = tl.load(cu + sequence)
++        end = tl.load(cu + sequence + 1)
++        previous = tl.load(accepted + sequence)
++        source = tl.load(
++            indices + sequence * stride_index_seq + (previous - 1) * stride_index_row
++        ).to(tl.int64)
++        if source <= 0:
++            for row in range(begin, end):
++                tl.store(output + (row * HV + i_hv) * V + o_v, 0, mask=mask_v)
++            return
++        b_h = tl.load(initial + source * stride_state + offsets, mask=mask_h, other=0).to(
++            tl.float32
++        )
++    else:
++        begin, end = 0, T
++        b_h = tl.load(initial + offsets, mask=mask_h, other=0).to(tl.float32)
++    for row in range(begin, end):
++        p_mixed = mixed_qkv + row * stride_qkv
++        q_off = i_h * K + o_k
++        k_off = H * K + i_h * K + o_k
++        v_off = 2 * H * K + i_hv * V + o_v
++        b_q = tl.load(p_mixed + q_off, mask=mask_k, other=0).to(tl.float32)
++        b_k = tl.load(p_mixed + k_off, mask=mask_k, other=0).to(tl.float32)
++        b_v = tl.load(p_mixed + v_off, mask=mask_v, other=0).to(tl.float32)
++        b_q = b_q / tl.sqrt(tl.sum(b_q * b_q) + 1e-6)
++        b_k = b_k / tl.sqrt(tl.sum(b_k * b_k) + 1e-6)
++        b_q = b_q * scale
++        a_val = tl.load(a + row * stride_a + i_hv).to(tl.float32)
++        b_val = tl.load(b + row * stride_b + i_hv).to(tl.float32)
++        A_log_val = tl.load(A_log + i_hv).to(tl.float32)
++        dt_bias_val = tl.load(dt_bias + i_hv).to(tl.float32)
++        x = a_val + dt_bias_val
++        softplus_x = tl.where(x <= 20.0, tl.log(1.0 + tl.exp(x)), x)
++        g_val = -tl.exp(A_log_val) * softplus_x
++        beta_val = tl.sigmoid(b_val).to(b.dtype.element_ty).to(tl.float32)
++        b_h *= exp(g_val)
++        b_v -= tl.sum(b_h * b_k[None, :], 1)
++        b_v *= beta_val
++        b_h += b_v[:, None] * b_k[None, :]
++        b_o = tl.sum(b_h * b_q[None, :], 1)
++        p_o = output + (row * HV + i_hv) * V + o_v
++        tl.store(p_o, b_o.to(p_o.dtype.element_ty), mask=mask_v)
++        if SAVE_ROWS:
++            if INDEXED:
++                destination = tl.load(
++                    indices + sequence * stride_index_seq + (row - begin) * stride_index_row
++                ).to(tl.int64)
++                tl.store(
++                    states + destination * stride_state + offsets,
++                    b_h,
++                    mask=mask_h & (destination > 0),
++                )
++            else:
++                tl.store(states + row * HV * V * K + offsets, b_h, mask=mask_h)
++    if not SAVE_ROWS:
++        tl.store(states + offsets, b_h, mask=mask_h)
+diff --git a/experimental/serial_gdn_contract/stock_gdn_sequence.py b/experimental/serial_gdn_contract/stock_gdn_sequence.py
+new file mode 100644
+index 0000000..05ceafd
+--- /dev/null
++++ b/experimental/serial_gdn_contract/stock_gdn_sequence.py
+@@ -0,0 +1,263 @@
++"""Experimental ordered GDN replay through the pinned stock M1 executable.
++
++This is an operator repair candidate, not an installed backend hook. It uses
++private state, retains D7 after-row states and never writes a live session.
++The serial launches intentionally prioritize arithmetic identity over speed.
++Importing this file does not import Torch/Triton or access a GPU.
++"""
++
++from __future__ import annotations
++
++import dataclasses
++import hashlib
++import importlib
++import threading
++from pathlib import Path
++
++from qwen_r9700_lab.conformance_gdn_contract import (
++    CONTRACT_ID,
++    CONTRACT_SHA256,
++    audit_artifacts,
++    committed_gdn_row,
++    read_contract,
++)
++from qwen_r9700_lab.diagnostic_contract import DiagnosticError, authenticate, integer
++
++MODULE = "vllm.third_party.flash_linear_attention.ops.fused_recurrent"
++KERNEL = "fused_recurrent_gated_delta_rule_packed_decode_kernel"
++STATE_SHAPE = (48, 128, 128)
++STATE_ELEMENTS = 48 * 128 * 128
++STATE_STRIDE = 802816
++GRID = (4, 48, 1)
++
++
++def _contract(contract):
++    authenticate(contract)
++    if contract.get("id") != CONTRACT_ID or contract["sha256"] != CONTRACT_SHA256:
++        raise DiagnosticError("unreviewed stock GDN sequence contract")
++
++
++def check_executable(contract, binary: bytes, metadata: dict):
++    """Check the executable returned by warmup before allowing any launch.
++
++    This binds an invocation to the chosen arithmetic artifact. It is not a
++    functional proof of the artifact or an attestation of physical execution.
++    """
++    _contract(contract)
++    authority = contract["arithmetic_authority"]
++    expected = authority["files"][KERNEL + ".hsaco"]
++    if not isinstance(binary, bytes) or hashlib.sha256(binary).hexdigest() != expected:
++        raise DiagnosticError("stock GDN executable differs from the pinned oracle")
++    if metadata.get("target") != authority["target"] or any(
++        metadata.get(key) != value for key, value in authority["compiler"].items()
++    ):
++        raise DiagnosticError("stock GDN runtime compiler metadata changed")
++    return expected
++
++
++@dataclasses.dataclass(frozen=True)
++class SequenceResult:
++    outputs: object
++    final_state: object
++    after_rows: dict[int, object]
++    rows: int
++
++    def accepted_state(self, accepted_proposals: int):
++        if self.rows != 8 or set(self.after_rows) != set(range(8)):
++            raise DiagnosticError("accepted-prefix selection requires a complete D7 capture")
++        # Row zero consumes the old pending token. The new bonus/correction
++        # remains pending; there is deliberately no extra transition here.
++        return self.after_rows[committed_gdn_row(accepted_proposals)].clone()
++
++
++class _Sequence:
++    """Shared implementation; the public native factory supplies a bound launcher.
++
++    Tests use CPU Torch tensors and a deliberately non-GDN transition to check
++    isolation, ordering and fault handling without claiming native arithmetic.
++    """
++
++    def __init__(self, torch, contract, device, launch_factory):
++        _contract(contract)
++        self.torch = torch
++        self.contract = contract
++        self.device = torch.device(device)
++        self._lock = threading.Lock()
++        self.storage = torch.full((3 * STATE_STRIDE,), 17.0, dtype=torch.float32, device=device)
++        self.pool = self.storage.as_strided((3, *STATE_SHAPE), (STATE_STRIDE, 128 * 128, 128, 1))
++        # The single-row arithmetic does not depend on the row stride, but the
++        # executable identity does. Preserve the captured QKVZ-backed packing.
++        self.qkv_storage = torch.full((1, 16384), 17.0, dtype=torch.bfloat16, device=device)
++        self.qkv = self.qkv_storage[:, :10240]
++        self.a_storage = torch.full((1, 96), 17.0, dtype=torch.bfloat16, device=device)
++        self.b_storage = self.a_storage.clone()
++        self.a, self.b = self.a_storage[:, :48], self.b_storage[:, :48]
++        self.A_log = torch.empty(48, dtype=torch.float32, device=device)
++        self.dt_bias = torch.empty(48, dtype=torch.bfloat16, device=device)
++        self.output = torch.empty((1, 1, 48, 128), dtype=torch.bfloat16, device=device)
++        self.indices = torch.ones(1, dtype=torch.int32, device=device)
++        self._launch = launch_factory(self)
++
++    def _tensor(self, value, shape, dtype, name):
++        if (
++            not isinstance(value, self.torch.Tensor)
++            or tuple(value.shape) != tuple(shape)
++            or value.dtype != dtype
++            or value.device != self.device
++            or not bool(self.torch.isfinite(value).all())
++        ):
++            raise DiagnosticError(f"unsupported stock GDN replay tensor: {name}")
++
++    def _guards(self):
++        if (
++            not bool((self.storage[:STATE_STRIDE] == 17).all())
++            or not bool((self.storage[STATE_STRIDE + STATE_ELEMENTS :] == 17).all())
++            or not bool((self.a_storage[:, 48:] == 17).all())
++            or not bool((self.b_storage[:, 48:] == 17).all())
++            or not bool((self.qkv_storage[:, 10240:] == 17).all())
++            or not bool((self.indices == 1).all())
++        ):
++            raise DiagnosticError("stock GDN replay modified a guard or state index")
++
++    def run(self, initial, mixed_qkv, a, b, a_log, dt_bias, *, retain_rows=()):
++        """Return tentative results from one sequence; empty input is identity."""
++        if not self._lock.acquire(blocking=False):
++            raise DiagnosticError("stock GDN scratch workspace is already in use")
++        try:
++            return self._run(initial, mixed_qkv, a, b, a_log, dt_bias, retain_rows)
++        finally:
++            self._lock.release()
++
++    def _run(self, initial, mixed_qkv, a, b, a_log, dt_bias, retain_rows):
++        t = self.torch
++        if not isinstance(mixed_qkv, t.Tensor) or mixed_qkv.ndim != 2:
++            raise DiagnosticError("stock GDN replay requires a matrix of packed input rows")
++        rows = mixed_qkv.shape[0]
++        keep = tuple(retain_rows)
++        for row in keep:
++            integer(row)
++            if row >= rows:
++                raise DiagnosticError("retained GDN state row is outside the sequence")
++        if len(set(keep)) != len(keep):
++            raise DiagnosticError("duplicate retained GDN state row")
++        for value, shape, dtype, name in (
++            (initial, STATE_SHAPE, t.float32, "initial state"),
++            (mixed_qkv, (rows, 10240), t.bfloat16, "mixed QKV"),
++            (a, (rows, 48), t.bfloat16, "a"),
++            (b, (rows, 48), t.bfloat16, "b"),
++            (a_log, (48,), t.float32, "A_log"),
++            (dt_bias, (48,), t.bfloat16, "dt_bias"),
++        ):
++            self._tensor(value, shape, dtype, name)
++        self.storage.fill_(17)
++        self.qkv_storage.fill_(17)
++        self.a_storage.fill_(17)
++        self.b_storage.fill_(17)
++        self.indices.fill_(1)
++        self.pool[1].copy_(initial)
++        self.A_log.copy_(a_log)
++        self.dt_bias.copy_(dt_bias)
++        outputs = t.empty((rows, 48, 128), dtype=t.bfloat16, device=self.device)
++        retained = {}
++        for row in range(rows):
++            self.qkv.copy_(mixed_qkv[row : row + 1])
++            self.a.copy_(a[row : row + 1])
++            self.b.copy_(b[row : row + 1])
++            self.output.fill_(float("nan"))
++            self._launch()
++            # These synchronizing checks are intentional in this diagnostic
++            # implementation. No unchecked result reaches the caller.
++            self._guards()
++            if not bool(t.isfinite(self.output).all()) or not bool(t.isfinite(self.pool[1]).all()):
++                raise DiagnosticError("stock GDN replay produced incomplete or non-finite results")
++            for copied, original in (
++                (self.qkv, mixed_qkv[row : row + 1]),
++                (self.a, a[row : row + 1]),
++                (self.b, b[row : row + 1]),
++                (self.A_log, a_log),
++                (self.dt_bias, dt_bias),
++            ):
++                if not t.equal(copied.view(t.uint8), original.contiguous().view(t.uint8)):
++                    raise DiagnosticError("stock GDN replay modified an input")
++            outputs[row].copy_(self.output[0, 0])
++            if row in keep:
++                retained[row] = self.pool[1].clone()
++        self._guards()
++        return SequenceResult(outputs, self.pool[1].clone(), retained, rows)
++
++    def d7(self, initial, mixed_qkv, a, b, a_log, dt_bias):
++        if not isinstance(mixed_qkv, self.torch.Tensor) or mixed_qkv.shape != (8, 10240):
++            raise DiagnosticError("D7 requires the pending input plus seven proposals")
++        return self.run(initial, mixed_qkv, a, b, a_log, dt_bias, retain_rows=range(8))
++
++
++def native_sequence(contract_path: Path, compiled_root: Path, stock_source: Path, op_source: Path):
++    """Create a GPU runner only under the caller's already acquired GPU lease.
++
++    The factory compiles but does not launch the GDN kernel until its binary has
++    matched the existing oracle. There is no approximate or alternate fallback.
++    """
++    contract = read_contract(contract_path)
++    audit_artifacts(
++        contract, compiled_root, {"fused_recurrent.py": stock_source, "fla_op.py": op_source}
++    )
++    import torch
++    import triton
++    from triton.runtime import driver
++
++    stock = importlib.import_module(MODULE)
++    op = importlib.import_module(MODULE.rsplit(".", 1)[0] + ".op")
++    authority = contract["arithmetic_authority"]
++    for module, name in ((stock, "fused_recurrent.py"), (op, "fla_op.py")):
++        actual = hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
++        if actual != authority["source"][name]:
++            raise DiagnosticError("loaded stock GDN sources differ from the oracle")
++    if stock.exp is not op.exp or triton.__version__ != authority["compiler"]["triton_version"]:
++        raise DiagnosticError("loaded stock GDN math or compiler differs from the oracle")
++    target = driver.active.get_current_target()
++    if dataclasses.asdict(target) != authority["target"]:
++        raise DiagnosticError("stock GDN replay requires the pinned gfx1201 target")
++
++    def factory(workspace):
++        arguments = {
++            "mixed_qkv": workspace.qkv,
++            "a": workspace.a,
++            "b": workspace.b,
++            "A_log": workspace.A_log,
++            "dt_bias": workspace.dt_bias,
++            "o": workspace.output,
++            "h0": workspace.pool,
++            "ht": workspace.pool,
++            "ssm_state_indices": workspace.indices,
++            "scale": 128**-0.5,
++            "stride_mixed_qkv_tok": 16384,
++            "stride_a_tok": 96,
++            "stride_b_tok": 96,
++            "stride_init_state_token": STATE_STRIDE,
++            "stride_final_state_token": STATE_STRIDE,
++            "stride_indices_seq": 1,
++            "H": 16,
++            "HV": 48,
++            "K": 128,
++            "V": 128,
++            "BK": 128,
++            "BV": 32,
++            "SOFTPLUS_THRESHOLD": 20.0,
++            "USE_QK_L2NORM_IN_KERNEL": True,
++            "SPLIT_BATCH_HEAD_GRID": False,
++        }
++        kernel = getattr(stock, KERNEL)
++        if set(kernel.arg_names) != set(arguments):
++            raise DiagnosticError("unreviewed stock GDN native call ABI")
++        options = {k: v for k, v in authority["compiler"].items() if k != "triton_version"}
++        compiled = kernel.warmup(**arguments, grid=GRID, **options)
++        metadata = compiled.metadata._asdict()
++        if dataclasses.is_dataclass(metadata.get("target")):
++            metadata["target"] = dataclasses.asdict(metadata["target"])
++        # Triton places the version in compiler metadata in this pinned build.
++        check_executable(contract, compiled.kernel, metadata)
++        launch = compiled[GRID]
++        values = tuple(arguments[name] for name in kernel.arg_names)
++        return lambda: launch(*values)
++
++    return _Sequence(torch, contract, torch.device("cuda", torch.cuda.current_device()), factory)
+diff --git a/experimental/serial_gdn_contract/tests/test_stock_gdn_convolution_adapter.py b/experimental/serial_gdn_contract/tests/test_stock_gdn_convolution_adapter.py
+new file mode 100644
+index 0000000..cfedea1
+--- /dev/null
++++ b/experimental/serial_gdn_contract/tests/test_stock_gdn_convolution_adapter.py
+@@ -0,0 +1,55 @@
++"""Convolution ABI/isolation checks in CPU Torch; native checks are separate."""
++
++import importlib
++from pathlib import Path
++
++import pytest
++
++torch = pytest.importorskip("torch", reason="requires pinned CPU-only stack image")
++
++
++@pytest.fixture
++def module(monkeypatch):
++    monkeypatch.syspath_prepend(
++        str(Path(__file__).resolve().parents[1])
++    )
++    return importlib.import_module("stock_gdn_convolution_adapter")
++
++
++@pytest.mark.parametrize("previous", range(1, 9))
++def test_previous_acceptance_and_history_pass_through_without_changing_input(module, previous):
++    x = torch.arange(8 * 10240).reshape(8, 10240).to(torch.bfloat16)
++    original = x.clone()
++    state = torch.zeros((3, 10240, 10), dtype=torch.bfloat16)
++    weight = torch.zeros((10240, 4), dtype=torch.bfloat16)
++    indices = torch.tensor([2], dtype=torch.int32)
++    accepted = torch.tensor([previous], dtype=torch.int32)
++    cu = torch.tensor([0, 8], dtype=torch.int32)
++
++    def update(raw, history, weights, bias, activation, **kwargs):
++        assert raw is x and history is state and weights is weight
++        assert bias is None and activation == "silu"
++        assert kwargs["num_accepted_tokens"] is accepted
++        assert kwargs["conv_state_indices"] is indices
++        assert kwargs["query_start_loc"] is cu and kwargs["max_query_len"] == 8
++        out = kwargs["out"]
++        assert out.data_ptr() != x.data_ptr()
++        out.copy_(raw)
++        return out
++
++    adapter = module.StockConvolutionAdapter(torch, update)
++    result = adapter(x, weight, None, state, 10, indices, accepted, cu, 1, 8, 48, 16, 8)
++    assert adapter.calls == 1 and torch.equal(x, original)
++    assert [tuple(v.shape) for v in result] == [(8, 16, 128), (8, 16, 128), (8, 48, 128)]
++    assert all(v.is_contiguous() for v in result)
++    assert torch.equal(torch.cat([v.flatten(1) for v in result], -1), x)
++
++
++def test_captured_midpoint_rounds_to_even():
++    # Layer 4, value channel 3887: the FP32 SiLU is exactly a BF16
++    # midpoint. R4D's add-0x8000 conversion chooses the other endpoint.
++    x = torch.tensor([0.00293731689453125], dtype=torch.float32)
++    assert x.to(torch.bfloat16).item() == 0.0029296875
++    bits = x.view(torch.int32)
++    away = ((bits + 0x8000) >> 16).to(torch.int16).view(torch.bfloat16)
++    assert away.item() == 0.0029449462890625
+diff --git a/experimental/serial_gdn_contract/tests/test_stock_gdn_prefill_adapter.py b/experimental/serial_gdn_contract/tests/test_stock_gdn_prefill_adapter.py
+new file mode 100644
+index 0000000..1f96fd9
+--- /dev/null
++++ b/experimental/serial_gdn_contract/tests/test_stock_gdn_prefill_adapter.py
+@@ -0,0 +1,84 @@
++"""Fresh/continued prefill ownership checks with CPU-only stand-in operators."""
++
++import importlib
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++from qwen_r9700_lab.diagnostic_contract import DiagnosticError
++
++torch = pytest.importorskip("torch", reason="requires pinned CPU-only stack image")
++
++
++@pytest.fixture
++def module(monkeypatch):
++    monkeypatch.syspath_prepend(
++        str(Path(__file__).resolve().parents[1])
++    )
++    return importlib.import_module("stock_gdn_prefill_adapter")
++
++
++@pytest.mark.parametrize("has_initial", [False, True])
++def test_prefill_selects_only_owned_history_and_publishes_final_state(module, has_initial):
++    count = 4
++    state = torch.full((3, 48, 128, 128), 7.0)
++    conv_state = torch.full((3, 10240, 10), 5.0, dtype=torch.bfloat16)
++    before = state.clone()
++    conv_before = conv_state.clone()
++    md = SimpleNamespace(
++        num_prefills=1,
++        prefill_state_indices=torch.tensor([2], dtype=torch.int32),
++        prefill_has_initial_state=torch.tensor([has_initial]),
++        has_initial_state=torch.tensor([has_initial]),
++        non_spec_state_indices_tensor=torch.tensor([[1]], dtype=torch.int32),
++    )
++    cu = torch.tensor([0, count], dtype=torch.int32)
++    plan = ("prefill", count, conv_state, state, md, (None, cu))
++    native = SimpleNamespace(_plan=lambda *args: plan)
++    layer = SimpleNamespace(
++        A_log=torch.zeros(48),
++        dt_bias=torch.zeros(48, dtype=torch.bfloat16),
++        conv1d=SimpleNamespace(weight=torch.ones((10240, 1, 4), dtype=torch.bfloat16), bias=None),
++        _radiance_z=torch.ones(1),
++    )
++    raw = torch.ones((count, 10240), dtype=torch.bfloat16)
++    gates = torch.zeros((count, 48), dtype=torch.bfloat16)
++    output = torch.empty((count, 48, 128), dtype=torch.bfloat16)
++
++    def convolution(x, history, weights, bias, activation, **kwargs):
++        assert torch.all(history[1] == (5 if has_initial else 0))
++        assert torch.equal(history[[0, 2]], conv_before[[0, 2]])
++        assert kwargs.get("num_accepted_tokens") is None
++        assert kwargs["out"].data_ptr() != raw.data_ptr()
++        kwargs["out"].fill_(2)
++        history[1, :, :3] = 3
++        return kwargs["out"]
++
++    def scan(initial, qkv, a, b, a_log, dt_bias):
++        assert torch.all(initial == (7 if has_initial else 0))
++        assert torch.all(qkv == 2)
++        return SimpleNamespace(
++            outputs=torch.full_like(output, 4), final_state=torch.full_like(initial, 9)
++        )
++
++    adapter = module.StockPrefillAdapter(
++        torch, native, convolution, SimpleNamespace(run=scan), None
++    )
++    assert adapter(layer, raw, gates, gates, output) is True
++    assert adapter.calls == 1 and adapter.rows == count
++    assert torch.all(state[2] == 9) and torch.equal(state[:2], before[:2])
++    assert torch.all(raw == 1) and torch.all(output == 4)
++    assert not hasattr(layer, "_radiance_z")
++
++
++def test_decode_is_delegated_and_unqualified_mixed_prefill_is_rejected(module):
++    plan = ["decode"]
++    sentinel = object()
++    adapter = module.StockPrefillAdapter(
++        torch, SimpleNamespace(_plan=lambda *a: plan), None, None, lambda *a: sentinel
++    )
++    assert adapter(None, None, None, None, None) is sentinel
++    plan[:] = ["prefill+spec", 8, None, None, SimpleNamespace(num_prefills=1), (None, None)]
++    with pytest.raises(DiagnosticError, match="unmixed"):
++        adapter(None, None, None, None, None)
+diff --git a/experimental/serial_gdn_contract/tests/test_stock_gdn_recurrent_adapter.py b/experimental/serial_gdn_contract/tests/test_stock_gdn_recurrent_adapter.py
+new file mode 100644
+index 0000000..8d3fc81
+--- /dev/null
++++ b/experimental/serial_gdn_contract/tests/test_stock_gdn_recurrent_adapter.py
+@@ -0,0 +1,152 @@
++"""Test the real call adapter on CPU; the fake transition is intentionally not GDN."""
++
++import importlib.util
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++torch = pytest.importorskip(
++    "torch", reason="requires CPU Torch; qualification uses the pinned CPU-only stack image"
++)
++
++DIRECTORY = Path(__file__).resolve().parents[1]
++
++
++@pytest.fixture
++def setup(monkeypatch):
++    monkeypatch.syspath_prepend(str(DIRECTORY))
++    spec = importlib.util.spec_from_file_location(
++        "stock_adapter", DIRECTORY / "stock_gdn_recurrent_adapter.py"
++    )
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++
++    class Sequence:
++        device = torch.device("cpu")
++
++        def run(self, state, qkv, a, b, alog, bias, *, retain_rows):
++            self.initial = state.clone()
++            self.qkv = qkv.clone()
++            count = len(qkv)
++            assert list(retain_rows) == list(range(count))
++            states = {i: state + i + 1 for i in range(count)}
++            return SimpleNamespace(
++                rows=count,
++                outputs=torch.arange(count, dtype=torch.bfloat16)[:, None, None]
++                .expand(count, 48, 128)
++                .clone(),
++                after_rows=states,
++            )
++
++    seq = Sequence()
++    args = {
++        "q": torch.ones((8, 16, 128), dtype=torch.bfloat16),
++        "k": torch.full((8, 16, 128), 2, dtype=torch.bfloat16),
++        "v": torch.full((8, 48, 128), 3, dtype=torch.bfloat16),
++        "a": torch.zeros((8, 48), dtype=torch.bfloat16),
++        "b": torch.ones((8, 48), dtype=torch.bfloat16),
++        "A_log": torch.zeros(48),
++        "dt_bias": torch.ones(48),
++        "ssm_state": torch.arange(10, dtype=torch.float32)[:, None, None, None]
++        .expand(10, 48, 128, 128)
++        .clone(),
++        "o": torch.full((8, 48, 128), -17, dtype=torch.bfloat16),
++        "cu": torch.tensor([0, 8], dtype=torch.int32),
++        "sidx": torch.tensor([[8, 1, 6, 2, 5, 3, 7, 4]], dtype=torch.int32),
++        "num_accepted": torch.tensor([1], dtype=torch.int32),
++        "num_seqs": 1,
++        "H": 48,
++        "Hg": 16,
++        "scale": 128**-0.5,
++    }
++    return m, seq, m.StockRecurrentAdapter(torch, seq), args
++
++
++@pytest.mark.parametrize("previous_accepted", range(1, 9))
++def test_uses_previous_accepted_slot_and_publishes_each_after_row(setup, previous_accepted):
++    _, seq, adapter, args = setup
++    args["num_accepted"][0] = previous_accepted
++    original = {k: v.clone() for k, v in args.items() if isinstance(v, torch.Tensor)}
++    selected = int(args["sidx"][0, previous_accepted - 1])
++    adapter(**args)
++    assert torch.equal(seq.initial, original["ssm_state"][selected])
++    assert seq.qkv.shape == (8, 10240)
++    assert bool((seq.qkv[:, :2048] == 1).all())
++    assert bool((seq.qkv[:, 2048:4096] == 2).all())
++    assert bool((seq.qkv[:, 4096:] == 3).all())
++    for row, slot in enumerate(args["sidx"][0]):
++        assert bool((args["ssm_state"][slot] == selected + row + 1).all())
++        assert bool((args["o"][row] == row).all())
++    assert torch.equal(args["ssm_state"][[0, 9]], original["ssm_state"][[0, 9]])
++    for name in original.keys() - {"ssm_state", "o"}:
++        assert torch.equal(args[name], original[name])
++    assert (adapter.calls, adapter.rows) == (1, 8)
++
++
++@pytest.mark.parametrize(
++    "fault", ["duplicate", "null", "range", "acceptance", "bias", "fused", "boundaries"]
++)
++def test_invalid_request_cannot_publish_anything(setup, fault):
++    m, _, adapter, args = setup
++    if fault == "duplicate":
++        args["sidx"][0, 1] = 8
++    elif fault == "null":
++        args["sidx"][0, 0] = 0
++    elif fault == "range":
++        args["sidx"][0, 0] = 10
++    elif fault == "acceptance":
++        args["num_accepted"][0] = 0
++    elif fault == "bias":
++        args["dt_bias"][0] = 1.001
++    elif fault == "fused":
++        args["norm"] = (None, 0, 0)
++    else:
++        args["cu"][1] = 7
++    initial = args["ssm_state"].clone()
++    output = args["o"].clone()
++    with pytest.raises(m.DiagnosticError):
++        adapter(**args)
++    assert torch.equal(args["ssm_state"], initial) and torch.equal(args["o"], output)
++    assert adapter.calls == 0
++
++
++@pytest.mark.parametrize("fault", ["exception", "incomplete", "nonfinite"])
++def test_tentative_computation_failure_cannot_publish_partial_state(setup, fault):
++    m, seq, adapter, args = setup
++    original = seq.run
++
++    def broken(*a, **kw):
++        if fault == "exception":
++            raise RuntimeError("injected failure")
++        result = original(*a, **kw)
++        if fault == "incomplete":
++            del result.after_rows[7]
++        else:
++            result.after_rows[7][0, 0, 0] = float("nan")
++        return result
++
++    seq.run = broken
++    initial = args["ssm_state"].clone()
++    output = args["o"].clone()
++    with pytest.raises((m.DiagnosticError, RuntimeError)):
++        adapter(**args)
++    assert torch.equal(args["ssm_state"], initial) and torch.equal(args["o"], output)
++
++
++@pytest.mark.parametrize("count", [1, 2, 7])
++def test_short_current_batch_can_start_from_last_previous_candidate(setup, count):
++    _, seq, adapter, args = setup
++    for name in ("q", "k", "v", "o"):
++        args[name] = args[name][:count]
++    args["cu"][1] = count
++    args["num_accepted"][0] = 8
++    original = args["ssm_state"].clone()
++    adapter(**args)
++    assert bool((seq.initial == 4).all())
++    touched = args["sidx"][0, :count].tolist()
++    for slot in range(10):
++        if slot in touched:
++            assert bool((args["ssm_state"][slot] == 5 + touched.index(slot)).all())
++        else:
++            assert torch.equal(args["ssm_state"][slot], original[slot])
+diff --git a/experimental/serial_gdn_contract/tests/test_stock_gdn_scan.py b/experimental/serial_gdn_contract/tests/test_stock_gdn_scan.py
+new file mode 100644
+index 0000000..9513ebc
+--- /dev/null
++++ b/experimental/serial_gdn_contract/tests/test_stock_gdn_scan.py
+@@ -0,0 +1,53 @@
++"""CPU admission checks for the ordered native scan candidate."""
++
++import importlib
++from pathlib import Path
++
++import pytest
++
++from qwen_r9700_lab.diagnostic_contract import DiagnosticError
++
++
++@pytest.fixture
++def module(monkeypatch):
++    monkeypatch.syspath_prepend(
++        str(Path(__file__).resolve().parents[1])
++    )
++    return importlib.import_module("stock_gdn_scan")
++
++
++@pytest.mark.parametrize("keep", [(True,), (-1,), (8,), (1.0,), (0, 0)])
++def test_invalid_state_selection_rejected(module, keep):
++    with pytest.raises(DiagnosticError):
++        module.retained_rows(8, keep)
++
++
++def test_all_accept_widths_and_empty_sequence(module):
++    assert module.retained_rows(8, range(8)) == tuple(range(8))
++    assert module.retained_rows(0, ()) == ()
++    with pytest.raises(DiagnosticError):
++        module.retained_rows(0, (0,))
++
++
++def test_empty_transition_is_independent_identity_and_cpu_does_not_launch(module):
++    torch = pytest.importorskip("torch")
++    scan = module.StockScan(torch, "cpu")
++    state = torch.zeros((48, 128, 128), dtype=torch.float32)
++    qkv = torch.empty((0, 10240), dtype=torch.bfloat16)
++    gates = torch.empty((0, 48), dtype=torch.bfloat16)
++    a_log = torch.zeros(48, dtype=torch.float32)
++    bias = torch.zeros(48, dtype=torch.bfloat16)
++    result = scan.run(state, qkv, gates, gates, a_log, bias)
++    assert result.rows == 0 and result.after_rows == {}
++    assert result.outputs.shape == (0, 48, 128)
++    result.final_state[0, 0, 0] = 1
++    assert state[0, 0, 0] == 0
++    with pytest.raises(DiagnosticError, match="requires a GPU"):
++        scan.run(
++            state,
++            torch.zeros((1, 10240), dtype=torch.bfloat16),
++            torch.zeros((1, 48), dtype=torch.bfloat16),
++            torch.zeros((1, 48), dtype=torch.bfloat16),
++            a_log,
++            bias,
++        )
+diff --git a/experimental/serial_gdn_contract/tests/test_stock_gdn_sequence.py b/experimental/serial_gdn_contract/tests/test_stock_gdn_sequence.py
+new file mode 100644
+index 0000000..0de4d47
+--- /dev/null
++++ b/experimental/serial_gdn_contract/tests/test_stock_gdn_sequence.py
+@@ -0,0 +1,209 @@
++"""CPU checks of the actual replay coordinator, not GPU arithmetic evidence."""
++
++import importlib
++import json
++import os
++from copy import deepcopy
++from pathlib import Path
++
++import pytest
++
++from qwen_r9700_lab.conformance_gdn_contract import read_contract
++from qwen_r9700_lab.diagnostic_contract import DiagnosticError, seal
++
++ROOT = Path(__file__).resolve().parents[1]
++CONTRACT = ROOT / "configs/profiles/gdn-stock-m1-arithmetic-v1.json"
++ARTIFACTS = Path(os.environ.get(
++    "RADIANCE_GDN_REFERENCE_ARTIFACTS",
++    ROOT / "artifacts/conformance/20260916-gdn-arithmetic-contract-001",
++))
++
++
++@pytest.fixture
++def module(monkeypatch):
++    monkeypatch.syspath_prepend(str(ROOT))
++    return importlib.import_module("stock_gdn_sequence")
++
++
++@pytest.fixture
++def contract():
++    return read_contract(CONTRACT)
++
++
++def test_changed_contract_is_not_admitted(module, contract):
++    changed = deepcopy(contract)
++    changed.pop("sha256")
++    changed["precision"]["beta"] = "FP32"
++    with pytest.raises(DiagnosticError, match="unreviewed"):
++        module.check_executable(seal(changed), b"", {})
++
++
++def test_unknown_binary_is_rejected_before_a_launch(module, contract):
++    with pytest.raises(DiagnosticError, match="executable differs"):
++        module.check_executable(contract, b"another GDN kernel", {})
++
++
++def test_retained_executable_and_metadata_are_required(module, contract):
++    authority = contract["arithmetic_authority"]
++    base = ARTIFACTS / authority["cache_entry"]
++    if not (base / (module.KERNEL + ".hsaco")).exists():
++        pytest.skip("Set RADIANCE_GDN_REFERENCE_ARTIFACTS to the qualified compiler artifacts")
++    binary = (base / (module.KERNEL + ".hsaco")).read_bytes()
++    metadata = json.loads((base / (module.KERNEL + ".json")).read_text())
++    assert (
++        module.check_executable(contract, binary, metadata)
++        == authority["files"][module.KERNEL + ".hsaco"]
++    )
++    for name, value in ("enable_fp_fusion", False), ("num_warps", 4), ("target", {}):
++        changed = {**metadata, name: value}
++        with pytest.raises(DiagnosticError, match="metadata changed"):
++            module.check_executable(contract, binary, changed)
++
++
++@pytest.fixture
++def torch():
++    result = pytest.importorskip("torch")
++    result.set_num_threads(1)
++    return result
++
++
++@pytest.fixture
++def inputs(torch, module):
++    # Distinct rows make an off-by-one commit or replay observable. Values are
++    # deliberately synthetic; this transition is not an emulation of GDN.
++    initial = torch.zeros(module.STATE_SHAPE, dtype=torch.float32)
++    qkv = torch.zeros((8, 10240), dtype=torch.bfloat16)
++    a = torch.arange(1, 9, dtype=torch.bfloat16)[:, None].expand(8, 48).clone()
++    b = torch.zeros((8, 48), dtype=torch.bfloat16)
++    return initial, qkv, a, b, torch.zeros(48), torch.zeros(48, dtype=torch.bfloat16)
++
++
++@pytest.fixture
++def runner(module, contract, torch):
++    calls = []
++
++    def factory(workspace):
++        def step():
++            calls.append(float(workspace.a[0, 0]))
++            increment = (workspace.a + workspace.b + workspace.qkv[:, :48]).float()
++            workspace.pool[1].mul_(0.5).add_(increment[0, :, None, None])
++            workspace.output[0, 0].copy_(workspace.pool[1, :, :, 0])
++
++        return step
++
++    result = module._Sequence(torch, contract, "cpu", factory)
++    result.test_calls = calls
++    return result
++
++
++@pytest.mark.parametrize("accepted", range(8))
++def test_every_acceptance_width_commits_only_its_processed_prefix(runner, inputs, accepted, torch):
++    initial, qkv, a, b, a_log, dt = inputs
++    before = [value.clone() for value in inputs]
++    result = runner.d7(*inputs)
++    expected = initial.clone()
++    for row in range(accepted + 1):
++        expected = expected * 0.5 + a[row].float()[:, None, None]
++    assert torch.equal(result.accepted_state(accepted), expected)
++    assert result.rows == 8
++    assert runner.test_calls == list(range(1, 9))
++    assert all(torch.equal(left, right) for left, right in zip(inputs, before, strict=True))
++    selected = result.accepted_state(accepted)
++    selected.zero_()
++    assert torch.equal(result.accepted_state(accepted), expected)
++    # Retained states and outputs must survive scratch reuse by another call.
++    copy = result.final_state.clone()
++    runner.run(initial, qkv[:1], a[:1], b[:1], a_log, dt)
++    assert torch.equal(result.final_state, copy)
++
++
++@pytest.mark.parametrize("accepted", range(7))
++def test_rejected_suffix_does_not_contaminate_any_retained_prefix(runner, inputs, accepted, torch):
++    result = runner.d7(*inputs)
++    poisoned = [value.clone() for value in inputs]
++    for value in poisoned[1:4]:
++        value[accepted + 1 :] = -31
++    other = runner.d7(*poisoned)
++    assert torch.equal(result.accepted_state(accepted), other.accepted_state(accepted))
++    assert torch.equal(result.outputs[: accepted + 1], other.outputs[: accepted + 1])
++    assert not torch.equal(result.final_state, other.final_state)
++
++
++@pytest.mark.parametrize("chunks", [(8,), (4, 4), (0, 3, 0, 5, 0), (1,) * 8, (2, 3, 3)])
++def test_prefill_partitions_include_empty_identity(runner, inputs, chunks, torch):
++    initial, qkv, a, b, a_log, dt = inputs
++    whole = runner.run(*inputs)
++    state, cursor, outputs = initial, 0, []
++    for size in chunks:
++        end = cursor + size
++        part = runner.run(state, qkv[cursor:end], a[cursor:end], b[cursor:end], a_log, dt)
++        state = part.final_state
++        outputs.append(part.outputs)
++        cursor = end
++    assert cursor == 8
++    assert torch.equal(whole.final_state, state)
++    assert torch.equal(whole.outputs, torch.cat(outputs))
++
++
++def test_physical_packing_matches_the_preserved_executable(runner):
++    assert runner.qkv.stride() == (16384, 1)
++    assert runner.a.stride() == runner.b.stride() == (96, 1)
++    assert runner.pool.stride() == (802816, 16384, 128, 1)
++    assert runner.indices.stride() == (1,)
++    assert runner.indices.tolist() == [1]
++
++
++@pytest.mark.parametrize("fault", ["guard", "index", "qkv", "gate", "nan", "missing", "error"])
++def test_tentative_results_are_not_returned_after_a_fault(runner, inputs, fault):
++    normal = runner._launch
++
++    def broken():
++        if fault == "missing":
++            return
++        if fault == "error":
++            raise DiagnosticError("injected launch error")
++        normal()
++        if fault == "guard":
++            runner.storage[0] = 0
++        elif fault == "index":
++            runner.indices[0] = 2
++        elif fault == "qkv":
++            runner.qkv[0, 0] = 1
++        elif fault == "gate":
++            runner.A_log[0] = 1
++        elif fault == "nan":
++            runner.pool[1, 0, 0, 0] = float("nan")
++
++    runner._launch = broken
++    with pytest.raises(DiagnosticError):
++        runner.d7(*inputs)
++    assert not runner._lock.locked()
++
++
++@pytest.mark.parametrize("bad", [-1, 8, True, "1", 1.0])
++def test_invalid_acceptance_counts_do_not_select_a_state(runner, inputs, bad):
++    result = runner.d7(*inputs)
++    with pytest.raises(DiagnosticError):
++        result.accepted_state(bad)
++
++
++def test_partial_sequence_cannot_be_used_as_a_d7_result(runner, inputs):
++    with pytest.raises(DiagnosticError, match="complete D7"):
++        runner.run(*inputs).accepted_state(0)
++
++
++def test_invalid_inputs_fail_before_any_transition(runner, inputs):
++    for a in (inputs[2].float(), inputs[2][:7], inputs[2] * float("nan")):
++        changed = (*inputs[:2], a, *inputs[3:])
++        with pytest.raises(DiagnosticError, match="tensor"):
++            runner.d7(*changed)
++    for keep in ((8,), (-1,), (True,), (1, 1)):
++        with pytest.raises(DiagnosticError):
++            runner.run(*inputs, retain_rows=keep)
++    assert runner.test_calls == []
++
++
++def test_scratch_cannot_be_shared_by_concurrent_replays(runner, inputs):
++    with runner._lock, pytest.raises(DiagnosticError, match="already in use"):
++        runner.d7(*inputs)
++    assert runner.test_calls == []
+-- 
+2.55.0
+

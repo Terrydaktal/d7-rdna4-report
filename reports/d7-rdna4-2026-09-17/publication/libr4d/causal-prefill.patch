@@ -1,0 +1,1584 @@
+From 6596517ef4ca813a0066f410623787bac2209afa Mon Sep 17 00:00:00 2001
+From: Terrydaktal <9lewis9@gmail.com>
+Date: Thu, 17 Sep 2026 05:31:31 +0100
+Subject: [PATCH] Add causal GDN prefill reference and source-bound
+ reproduction
+
+Expose the raw-gate producer and token-ordered recurrence used to eliminate dependence of an earlier prefix on future gates and prefill partition boundaries. Preserve the existing unfused R4D M1 numerical target, including FP32 beta, normalization order and output rounding, and make empty chunks identity transitions.
+
+Include the native partition/state probe, original source-bound builder and an isolated current-header compilation path with its successful receipt. Document input/output contracts, execution order, source hashes and the distinction between this R4D-M1 reference and the later stock-FLA compiled repair. Production dispatch is not changed by this experimental submission.
+
+Validation: current-header HIP compilation passed without GPU execution and all copied source identities matched. The separately pinned reference passed 52 native comparisons, including future-gate interventions, nonzero state/history, strided gates and empty sequences. Current-header native integration is still unqualified.
+Signed-off-by: Terrydaktal <9lewis9@gmail.com>
+---
+ experimental/causal_gdn_prefill/.gitignore    |   9 +
+ .../causal_gdn_prefill/BUILD_INPUTS.json      |  14 +
+ .../causal_gdn_prefill/PUBLICATION_BUILD.json |  39 ++
+ experimental/causal_gdn_prefill/README.md     |  65 ++
+ .../causal_gdn_prefill/SOURCE_PROVENANCE.json |  18 +
+ experimental/causal_gdn_prefill/build.py      |  52 ++
+ .../build_gdn_causal_prefill.py               | 103 ++++
+ experimental/causal_gdn_prefill/candidate.hip |   2 +
+ .../causal_gdn_prefill/gdn_causal_prefill.hip | 166 +++++
+ .../probe_gdn_causal_prefill.py               | 576 ++++++++++++++++++
+ .../causal_gdn_prefill/raw_convolution.hip    | 434 +++++++++++++
+ 11 files changed, 1478 insertions(+)
+ create mode 100644 experimental/causal_gdn_prefill/.gitignore
+ create mode 100644 experimental/causal_gdn_prefill/BUILD_INPUTS.json
+ create mode 100644 experimental/causal_gdn_prefill/PUBLICATION_BUILD.json
+ create mode 100644 experimental/causal_gdn_prefill/README.md
+ create mode 100644 experimental/causal_gdn_prefill/SOURCE_PROVENANCE.json
+ create mode 100644 experimental/causal_gdn_prefill/build.py
+ create mode 100644 experimental/causal_gdn_prefill/build_gdn_causal_prefill.py
+ create mode 100644 experimental/causal_gdn_prefill/candidate.hip
+ create mode 100644 experimental/causal_gdn_prefill/gdn_causal_prefill.hip
+ create mode 100644 experimental/causal_gdn_prefill/probe_gdn_causal_prefill.py
+ create mode 100644 experimental/causal_gdn_prefill/raw_convolution.hip
+
+diff --git a/experimental/causal_gdn_prefill/.gitignore b/experimental/causal_gdn_prefill/.gitignore
+new file mode 100644
+index 0000000..8e454e1
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/.gitignore
+@@ -0,0 +1,9 @@
++__pycache__/
++.pytest_cache/
++.ruff_cache/
++*.so
++*.hsaco
++*.pyc
++*.pt
++*.jsonl
++build/
+diff --git a/experimental/causal_gdn_prefill/BUILD_INPUTS.json b/experimental/causal_gdn_prefill/BUILD_INPUTS.json
+new file mode 100644
+index 0000000..9b3f763
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/BUILD_INPUTS.json
+@@ -0,0 +1,14 @@
++{
++  "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
++  "translation_unit": "candidate.hip",
++  "extra_flags": [
++    "-mcumode"
++  ],
++  "files": {
++    "r4d.h": "a3af49b29e6423b68426b695470c2c9cbdd9c8815836ab0e7be2d883e81188cd",
++    "r4d_gdn_wmma.h": "9c3c97f5f48d494f15648f3a0fb64fd7ae6ce5ce4961e83617c7d59a7d3ce104",
++    "experimental/causal_gdn_prefill/candidate.hip": "66654101c5ecf7d0e5473e667179e3bf9361d58985a7f679626485b3c144e85a",
++    "experimental/causal_gdn_prefill/raw_convolution.hip": "63766a034fdf33dcbc8bc8176863e871fed02910151b3bba40a638f9ca3ace58",
++    "experimental/causal_gdn_prefill/gdn_causal_prefill.hip": "05c68bde039001aa97472af382efd44e951f558cc9a78e951aa856a0f312a4d3"
++  }
++}
+diff --git a/experimental/causal_gdn_prefill/PUBLICATION_BUILD.json b/experimental/causal_gdn_prefill/PUBLICATION_BUILD.json
+new file mode 100644
+index 0000000..8a81098
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/PUBLICATION_BUILD.json
+@@ -0,0 +1,39 @@
++{
++  "status": "BUILT_UNTESTED",
++  "gpu_used": false,
++  "scope": "CPU compilation only; current-header native execution is not qualified",
++  "returncode": 0,
++  "source_inputs": {
++    "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
++    "translation_unit": "candidate.hip",
++    "extra_flags": [
++      "-mcumode"
++    ],
++    "files": {
++      "r4d.h": "a3af49b29e6423b68426b695470c2c9cbdd9c8815836ab0e7be2d883e81188cd",
++      "r4d_gdn_wmma.h": "9c3c97f5f48d494f15648f3a0fb64fd7ae6ce5ce4961e83617c7d59a7d3ce104",
++      "experimental/causal_gdn_prefill/candidate.hip": "66654101c5ecf7d0e5473e667179e3bf9361d58985a7f679626485b3c144e85a",
++      "experimental/causal_gdn_prefill/raw_convolution.hip": "63766a034fdf33dcbc8bc8176863e871fed02910151b3bba40a638f9ca3ace58",
++      "experimental/causal_gdn_prefill/gdn_causal_prefill.hip": "05c68bde039001aa97472af382efd44e951f558cc9a78e951aa856a0f312a4d3"
++    }
++  },
++  "build_script_sha256": "ba860da2c8b2543b52afcbd2c6ae908706713432cface0dc25cb449f157e78f9",
++  "command": [
++    "/opt/rocm/bin/hipcc",
++    "-O3",
++    "-std=c++17",
++    "--offload-arch=gfx1201",
++    "-shared",
++    "-fPIC",
++    "-ffp-contract=off",
++    "-Wall",
++    "-Wextra",
++    "-mcumode",
++    "-I",
++    "/qualification/preflight/libr4d-publication-20260917-01/prefill",
++    "/qualification/preflight/libr4d-publication-20260917-01/prefill/experimental/causal_gdn_prefill/candidate.hip",
++    "-o",
++    "/qualification/preflight/libr4d-publication-20260917-01/prefill-build/candidate.so"
++  ],
++  "binary_sha256": "15c70b9c77f71d8505fccc1ececac9001f0d51bfc5902a25b294fdc97d8ab7e0"
++}
+diff --git a/experimental/causal_gdn_prefill/README.md b/experimental/causal_gdn_prefill/README.md
+new file mode 100644
+index 0000000..445e056
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/README.md
+@@ -0,0 +1,65 @@
++# Causal GDN prefill reference targeting R4D M1
++
++The chunked prefill path can make an earlier prefix depend on future gates and
++on chunk partitioning through cumulative-gate reconstruction, midpoint scaling
++and the whole-call extreme-decay fallback. This experimental reference computes
++raw gates and follows a token-ordered recurrence instead.
++
++**This reference targets the existing unfused R4D M1 arithmetic.** It preserves
++that path's FP32 beta and output rounding rule. It is distinct from the later
++stock-FLA contract used by the final compiled 10K experiment. Neither result is
++silently treated as proof of the other numerical target.
++
++```text
++experimental/causal_gdn_prefill/
++├── raw_convolution.hip       # raw QKV and per-token gates from the pinned producer
++├── gdn_causal_prefill.hip    # ordered recurrence; optional prepared FP32 Q/K
++├── candidate.hip            # combined translation unit
++├── build.py                 # source-bound current-header CPU compilation
++├── BUILD_INPUTS.json
++├── build_gdn_causal_prefill.py # preserved original build and source contract
++├── probe_gdn_causal_prefill.py # preserved native partition/state probe
++└── SOURCE_PROVENANCE.json
++```
++
++Build from the repository root, with ROCm installed:
++
++```sh
++uv run --no-project python experimental/causal_gdn_prefill/build.py \
++  --output /tmp/r4d-causal-prefill
++```
++
++This emits a library, compiler log and `BUILT_UNTESTED` receipt into a new
++directory, without running the GPU. The original builder and native probe need
++the pinned Radiance support environment and authenticated synthetic capture.
++The producer source and GDN helper header still match their original hashes;
++the current `r4d.h` does not. A current-header build requires fresh ABI and native
++qualification before use. This experiment is not installed in the public API.
++
++For a previous state S, per-token gate g and beta, the recurrence is:
++
++```text
++D = exp(g) * S
++p = D * k
++u = beta * (v - p)
++S_next = D + u * transpose(k)
++o = S_next * q
++```
++
++The actual source fixes the finite-precision order, normalization and casts;
++real-number equations alone do not specify them. Every step consumes only the
++current token and previous state. An empty chunk is identity. If each call
++implements that same finite transition F and preserves its state, partition
++independence follows by composition of F. This is a scoped structural argument,
++not a proof of the compiled GPU binary for all inputs.
++
++The pinned optimized reference passed **52/52** native comparisons across two
++synthetic layers, including complete partitions, causal prefixes, future-gate
++changes, nonzero state/history, strided gates and empty sequences. Prepared-Q/K
++plus recurrence took 2.380/2.373 ms in those two 2,049-token layer controls.
++Those are operator timings, not decode throughput. A whole-model diagnostic made
++initial prefill exact while preserving evidence of the then-unfixed decode
++discrepancies. The later stock-contract repair is published separately in
++[Radiance #11](https://github.com/magiccodingman/vllm-radiance/pull/11).
++
++[Investigation report](https://github.com/Terrydaktal/qwen-r9700-lab/releases/tag/d7-report-v1.0.0).
+diff --git a/experimental/causal_gdn_prefill/SOURCE_PROVENANCE.json b/experimental/causal_gdn_prefill/SOURCE_PROVENANCE.json
+new file mode 100644
+index 0000000..9dbd6a2
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/SOURCE_PROVENANCE.json
+@@ -0,0 +1,18 @@
++{
++  "source_project": "https://github.com/Terrydaktal/qwen-r9700-lab",
++  "scope": "Preserved downstream sources; historical qualification applies to their pinned dependencies, not automatically to current libr4d.",
++  "files": {
++    "build_gdn_causal_prefill.py": {
++      "source": "experiments/radiance-public/build_gdn_causal_prefill.py",
++      "sha256": "cce27cb35cd8932b0f68ce2b04a4d56af6c91c6917c86a61bd8e3a035c078806"
++    },
++    "gdn_causal_prefill.hip": {
++      "source": "experiments/radiance-public/gdn_causal_prefill.hip",
++      "sha256": "05c68bde039001aa97472af382efd44e951f558cc9a78e951aa856a0f312a4d3"
++    },
++    "probe_gdn_causal_prefill.py": {
++      "source": "experiments/radiance-public/probe_gdn_causal_prefill.py",
++      "sha256": "46451684209f137c9e60610b605d36b7edd9cf19c67423167e99180569b1e255"
++    }
++  }
++}
+diff --git a/experimental/causal_gdn_prefill/build.py b/experimental/causal_gdn_prefill/build.py
+new file mode 100644
+index 0000000..789ddad
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/build.py
+@@ -0,0 +1,52 @@
++"""Compile the recorded experimental HIP sources without launching a GPU kernel."""
++
++import argparse
++import hashlib
++import json
++import subprocess
++from pathlib import Path
++
++
++def digest(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--output", required=True, type=Path)
++    parser.add_argument("--hipcc", default="/opt/rocm/bin/hipcc")
++    args = parser.parse_args()
++    here = Path(__file__).resolve().parent
++    root = here.parents[1]
++    manifest = json.loads((here / "BUILD_INPUTS.json").read_text())
++    for name, expected in manifest["files"].items():
++        actual = digest(root / name)
++        if actual != expected:
++            raise ValueError(f"Build input changed: {name}: {actual} != {expected}")
++    output = args.output.resolve()
++    output.mkdir(mode=0o700, parents=True, exist_ok=False)
++    command = [
++        args.hipcc, "-O3", "-std=c++17", "--offload-arch=gfx1201", "-shared",
++        "-fPIC", "-ffp-contract=off", "-Wall", "-Wextra",
++        *manifest.get("extra_flags", []), "-I", str(root),
++        str(here / manifest["translation_unit"]), "-o", str(output / "candidate.so"),
++    ]
++    done = subprocess.run(command, capture_output=True, text=True, timeout=240)
++    (output / "compiler.log").write_text(done.stdout + done.stderr)
++    receipt = {
++        "status": "BUILT_UNTESTED" if done.returncode == 0 else "BUILD_FAILED",
++        "gpu_used": False,
++        "scope": "CPU compilation only; current-header native execution is not qualified",
++        "returncode": done.returncode,
++        "source_inputs": manifest,
++        "build_script_sha256": digest(Path(__file__)),
++        "command": command,
++        "binary_sha256": digest(output / "candidate.so") if done.returncode == 0 else None,
++    }
++    (output / "build.json").write_text(json.dumps(receipt, indent=2) + "\n")
++    print(json.dumps({key: receipt[key] for key in ("status", "gpu_used", "returncode")}))
++    return done.returncode
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/experimental/causal_gdn_prefill/build_gdn_causal_prefill.py b/experimental/causal_gdn_prefill/build_gdn_causal_prefill.py
+new file mode 100644
+index 0000000..e9d1da5
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/build_gdn_causal_prefill.py
+@@ -0,0 +1,103 @@
++"""Build an isolated causal-prefill candidate; never alter installed libraries."""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import subprocess
++import time
++from pathlib import Path
++
++from qwen_r9700_lab.diagnostic_contract import seal, write_private
++
++CONV_SHA256 = "dc9f1a270f06f88716f1e95bf541546b1f2cb90a028ce823cf929f8967f81de8"
++HEADERS = {
++    "r4d.h": "473e7dfeb5df2a6a7715442c7ae8a95f8a00a8f9ece0fe0629eb91114f6ab25e",
++    "r4d_gdn_wmma.h": "9c3c97f5f48d494f15648f3a0fb64fd7ae6ce5ce4961e83617c7d59a7d3ce104",
++}
++
++
++def raw_convolution(source: bytes) -> str:
++    if hashlib.sha256(source).hexdigest() != CONV_SHA256:
++        raise ValueError("convolution source preimage mismatch")
++    text = source.decode()
++    begin = text.index("      // inclusive wave scan of the per-lane pair sums")
++    end = text.index("      if (i0 < rows) {", begin)
++    text = text[:begin] + text[end:]
++    text = text.replace(" = pre + g0;", " = g0;")
++    text = text.replace(" = pre + g0 + g1;", " = g1;")
++    begin = text.index("      float ss = 0.0f;")
++    end = text.index("      unsigned short* dst", begin)
++    text = (
++        text[:begin]
++        + "      const float inv = 1.0f; // Normalize in the recurrent kernel.\n"
++        + text[end:]
++    )
++    # Keep the producer ABI, including strided gates and convolution cache handling.
++    text = text.replace("r4d_gdn_conv_prep_w4_h128_bf16", "qwen_gdn_conv_raw")
++    text = text.replace("r4d_gdn_conv_update_w4_h128_bf16", "qwen_gdn_conv_update_reference")
++    return text
++
++
++def build(source: Path, output: Path):
++    conv = source / "r4d_gdn_conv_w4_h128_bf16.hip"
++    candidate = raw_convolution(conv.read_bytes())
++    headers = {name: (source / name).read_bytes() for name in HEADERS}
++    if any(hashlib.sha256(value).hexdigest() != HEADERS[name] for name, value in headers.items()):
++        raise ValueError("header preimage mismatch")
++    recurrence = Path(__file__).with_name("gdn_causal_prefill.hip").read_bytes()
++    output.mkdir(mode=0o700)
++    (output / "conv.hip").write_text(candidate)
++    (output / "recurrence.hip").write_bytes(recurrence)
++    (output / "candidate.hip").write_text('#include "conv.hip"\n#include "recurrence.hip"\n')
++    for name, value in headers.items():
++        (output / name).write_bytes(value)
++    command = [
++        "/opt/rocm/bin/hipcc",
++        "-O3",
++        "-std=c++17",
++        "--offload-arch=gfx1201",
++        "-shared",
++        "-fPIC",
++        "-Wall",
++        "-Wextra",
++        "-ffp-contract=off",
++        "-mcumode",
++        "-cuid=qwen_causal_" + hashlib.sha256(candidate.encode() + recurrence).hexdigest(),
++        str(output / "candidate.hip"),
++        "-o",
++        str(output / "candidate.so"),
++    ]
++    started = time.monotonic()
++    done = subprocess.run(command, capture_output=True, text=True, timeout=240, check=False)
++    (output / "compiler.log").write_text(done.stdout + done.stderr)
++    report = {
++        "status": "BUILT_UNTESTED" if done.returncode == 0 else "BUILD_FAILED",
++        "command": command,
++        "returncode": done.returncode,
++        "seconds": time.monotonic() - started,
++        "gpu_used": False,
++        "original_conv_sha256": CONV_SHA256,
++        "source_hashes": {
++            p.name: hashlib.sha256(p.read_bytes()).hexdigest()
++            for p in output.iterdir()
++            if p.suffix in (".hip", ".h")
++        },
++        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
++        "scope": "Raw convolution/gates plus causal FP32 recurrence; experimental, not deployed.",
++    }
++    if done.returncode == 0:
++        report["binary_sha256"] = hashlib.sha256((output / "candidate.so").read_bytes()).hexdigest()
++    report = seal(report)
++    write_private(output / "build.json", report)
++    print(json.dumps(report), flush=True)
++    return done.returncode
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--source", required=True, type=Path)
++    parser.add_argument("--output", required=True, type=Path)
++    args = parser.parse_args()
++    raise SystemExit(build(args.source, args.output))
+diff --git a/experimental/causal_gdn_prefill/candidate.hip b/experimental/causal_gdn_prefill/candidate.hip
+new file mode 100644
+index 0000000..df963d2
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/candidate.hip
+@@ -0,0 +1,2 @@
++#include "raw_convolution.hip"
++#include "gdn_causal_prefill.hip"
+diff --git a/experimental/causal_gdn_prefill/gdn_causal_prefill.hip b/experimental/causal_gdn_prefill/gdn_causal_prefill.hip
+new file mode 100644
+index 0000000..59f4cd4
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/gdn_causal_prefill.hip
+@@ -0,0 +1,166 @@
++// Qualification candidate: causal prefill using R4D's unfused M1 arithmetic.
++// q/k/v are raw BF16 convolution outputs; g/beta are per-token FP32 gates.
++// No cumulative gates, future-dependent rescaling, WY solve, or dispatch by
++// whole-sequence decay span. Compile with -ffp-contract=off (as R4D M1 does).
++// Initial and final state are separate, packed [sequence, head, V, K] arrays.
++#include <hip/hip_runtime.h>
++#include <stdint.h>
++
++static __device__ __forceinline__ float from_bf16(uint16_t value) {
++  return __uint_as_float(static_cast<uint32_t>(value) << 16);
++}
++
++static __device__ __forceinline__ uint16_t to_native_bf16(float value) {
++  // R4D M1's declared f2bf conversion rounds halfway away from zero.
++  // Preserve that existing arithmetic here; it is NOT an RTNE certificate.
++  return static_cast<uint16_t>((__float_as_uint(value) + 0x8000U) >> 16);
++}
++
++template <int SPLITS, bool PREPARED>
++__global__ __launch_bounds__(256 / SPLITS) void causal_prefill(
++    const void *__restrict__ q, const void *__restrict__ k,
++    const uint16_t *__restrict__ v, const float *__restrict__ gates,
++    const float *__restrict__ beta, const float *__restrict__ initial,
++    uint16_t *__restrict__ output, float *__restrict__ final,
++    const int *__restrict__ cu, int heads, int query_heads, float scale) {
++  const int sequence = blockIdx.x, head = blockIdx.y;
++  const int begin = cu[sequence], end = cu[sequence + 1];
++  const int row = (threadIdx.x >> 1) + blockIdx.z * (128 / SPLITS);
++  const int half = threadIdx.x & 1, start_k = half * 64;
++  const int query_head = head / (heads / query_heads);
++  const size_t state_offset = ((size_t)sequence * heads + head) * 128 * 128 +
++                              row * 128 + start_k;
++  float state[64];
++#pragma unroll
++  for (int j = 0; j < 64; ++j)
++    state[j] = initial[state_offset + j];
++  for (int token = begin; token < end; ++token) {
++    const size_t gate_offset = (size_t)token * heads + head;
++    const size_t qk_offset = ((size_t)token * query_heads + query_head) * 128 + start_k;
++    float queries[64], keys[64];
++#pragma unroll
++    for (int j = 0; j < 64; ++j) {
++      queries[j] = PREPARED ? ((const float *)q)[qk_offset + j]
++                            : from_bf16(((const uint16_t *)q)[qk_offset + j]);
++      keys[j] = PREPARED ? ((const float *)k)[qk_offset + j]
++                         : from_bf16(((const uint16_t *)k)[qk_offset + j]);
++    }
++    if (!PREPARED) {
++    float sq = 0.0f, sk = 0.0f;
++#pragma unroll
++    for (int j = 0; j < 64; ++j) {
++      sq += queries[j] * queries[j];
++      sk += keys[j] * keys[j];
++    }
++    sq += __shfl_xor(sq, 1, 32);
++    sk += __shfl_xor(sk, 1, 32);
++    const float qs = __frsqrt_rn(sq + 1e-6f) * scale;
++    const float ks = __frsqrt_rn(sk + 1e-6f);
++#pragma unroll
++    for (int j = 0; j < 64; ++j) {
++      queries[j] *= qs;
++      keys[j] *= ks;
++    }
++    }
++    const float decay = __expf(gates[gate_offset]);
++    float prediction = 0.0f;
++#pragma unroll
++    for (int j = 0; j < 64; ++j) {
++      state[j] *= decay;
++      prediction += state[j] * keys[j];
++    }
++    prediction += __shfl_xor(prediction, 1, 32);
++    const float residual = (from_bf16(v[gate_offset * 128 + row]) - prediction) *
++                           beta[gate_offset];
++    float value = 0.0f;
++#pragma unroll
++    for (int j = 0; j < 64; ++j) {
++      state[j] += residual * keys[j];
++      value += state[j] * queries[j];
++    }
++    value += __shfl_xor(value, 1, 32);
++    if (half == 0)
++      output[gate_offset * 128 + row] = to_native_bf16(value);
++  }
++  // Empty sequences are identity transitions too: never leave final uninitialized.
++#pragma unroll
++  for (int j = 0; j < 64; ++j)
++    final[state_offset + j] = state[j];
++}
++
++template <bool PREPARED> static int launch_prefill(
++    const void *q, const void *k, const void *v, const void *g, const void *beta,
++    const void *initial, void *output, void *final, const void *cu,
++    int sequences, int heads, int query_heads, float scale, void *stream) {
++  if (sequences < 0 || heads <= 0 || query_heads <= 0 || heads % query_heads)
++    return static_cast<int>(hipErrorInvalidValue);
++  if (sequences == 0)
++    return 0;
++  if (!initial || !final || !cu || initial == final)
++    return static_cast<int>(hipErrorInvalidValue);
++  const int want = (64 + sequences * heads - 1) / (sequences * heads);
++  const int splits = want >= 4 ? 4 : (want >= 2 ? 2 : 1);
++#define LAUNCH(S) \
++  hipLaunchKernelGGL((causal_prefill<S, PREPARED>), dim3(sequences, heads, S), 256 / S, 0, \
++      (hipStream_t)stream, q, k, \
++      (const uint16_t *)v, (const float *)g, (const float *)beta, \
++      (const float *)initial, (uint16_t *)output, (float *)final, \
++      (const int *)cu, heads, query_heads, scale)
++  if (splits == 4) { LAUNCH(4); }
++  else if (splits == 2) { LAUNCH(2); }
++  else { LAUNCH(1); }
++#undef LAUNCH
++  return static_cast<int>(hipGetLastError());
++}
++
++// Precompute each normalization once instead of repeating it for all 128 value
++// rows. The two lanes and their 64 ordered terms are identical to native M1.
++__global__ __launch_bounds__(256) void normalize_qk(
++    const uint16_t *__restrict__ q, const uint16_t *__restrict__ k,
++    float *__restrict__ out_q, float *__restrict__ out_k, int rows, float scale) {
++  const int row = (blockIdx.x * blockDim.x + threadIdx.x) / 2;
++  if (row >= rows) return;
++  const size_t offset = (size_t)row * 128 + (threadIdx.x & 1) * 64;
++  float qq[64], kk[64], sq = 0.0f, sk = 0.0f;
++#pragma unroll
++  for (int j = 0; j < 64; ++j) {
++    qq[j] = from_bf16(q[offset + j]);
++    kk[j] = from_bf16(k[offset + j]);
++    sq += qq[j] * qq[j];
++    sk += kk[j] * kk[j];
++  }
++  sq += __shfl_xor(sq, 1, 32);
++  sk += __shfl_xor(sk, 1, 32);
++  const float qs = __frsqrt_rn(sq + 1e-6f) * scale;
++  const float ks = __frsqrt_rn(sk + 1e-6f);
++#pragma unroll
++  for (int j = 0; j < 64; ++j) {
++    out_q[offset + j] = qq[j] * qs;
++    out_k[offset + j] = kk[j] * ks;
++  }
++}
++
++extern "C" int qwen_gdn_normalize_qk(const void *q, const void *k, void *out_q,
++    void *out_k, int rows, float scale, void *stream) {
++  if (rows < 0) return static_cast<int>(hipErrorInvalidValue);
++  if (!rows) return 0;
++  normalize_qk<<<(rows + 127) / 128, 256, 0, (hipStream_t)stream>>>(
++      (const uint16_t *)q, (const uint16_t *)k, (float *)out_q, (float *)out_k, rows, scale);
++  return static_cast<int>(hipGetLastError());
++}
++
++extern "C" int qwen_gdn_causal_prefill(
++    const void *q, const void *k, const void *v, const void *g, const void *beta,
++    const void *initial, void *output, void *final, const void *cu,
++    int sequences, int heads, int query_heads, float scale, void *stream) {
++  return launch_prefill<false>(q, k, v, g, beta, initial, output, final, cu,
++                               sequences, heads, query_heads, scale, stream);
++}
++
++extern "C" int qwen_gdn_causal_prefill_prepared(
++    const void *q, const void *k, const void *v, const void *g, const void *beta,
++    const void *initial, void *output, void *final, const void *cu,
++    int sequences, int heads, int query_heads, float scale, void *stream) {
++  return launch_prefill<true>(q, k, v, g, beta, initial, output, final, cu,
++                              sequences, heads, query_heads, scale, stream);
++}
+diff --git a/experimental/causal_gdn_prefill/probe_gdn_causal_prefill.py b/experimental/causal_gdn_prefill/probe_gdn_causal_prefill.py
+new file mode 100644
+index 0000000..198e844
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/probe_gdn_causal_prefill.py
+@@ -0,0 +1,576 @@
++"""Qualify the isolated causal GDN candidate on synthetic, authenticated captures.
++
++The fixture manifest is a synthetic full-model capture, never a Pi transcript.
++Compare raw-input partitions, causal prefixes, native M1 state, memory guards,
++and empty sequences. Numerical evidence is scoped to this build and these inputs.
++"""
++
++from __future__ import annotations
++
++import argparse
++import ctypes
++import hashlib
++import json
++import os
++import statistics
++from pathlib import Path
++
++from qwen_r9700_lab.conformance_gpu_lease import gpu_lease
++from qwen_r9700_lab.conformance_state import read_frame
++from qwen_r9700_lab.diagnostic_contract import authenticate, private_json, seal, write_private
++
++CAPTURE_SHA = "a1ee09adc7baeee1f04a577ffba20767c4a532a1239d6a7c9ba169b967fd6f30"
++
++
++def load_tensor(root, row, key):
++    import torch
++
++    directory = root / f"call-{row['index']:09}" / "before"
++    frame = read_frame(directory)
++    if frame["sha256"] != row["before"]["frame"]:
++        raise ValueError("frame identity mismatch")
++    component = frame["components"][key]
++    raw = (directory / component["file"]).read_bytes()
++    if hashlib.sha256(raw).hexdigest() != component["sha256"]:
++        raise ValueError("tensor identity mismatch")
++    desc = row["before"]["descriptors"][key]
++    return (
++        torch.frombuffer(bytearray(raw), dtype=getattr(torch, desc["dtype"].removeprefix("torch.")))
++        .reshape(desc["shape"])
++        .clone()
++    )
++
++
++def captured(root, layer):
++    import torch
++
++    manifest = private_json(root / "calls.json")
++    authenticate(manifest)
++    if manifest["sha256"] != CAPTURE_SHA:
++        raise ValueError("expected synthetic fixture manifest")
++    rows = {row["index"]: row for row in manifest["calls"]}
++    selected = []
++    for row in rows.values():
++        if row["site"] != "radiance_gdn.conv_prep" or row["logical"]["phase"] != "prefill":
++            continue
++        parent = row
++        while (
++            parent and parent["site"] != f"target.language_model.model.layers.{layer}.linear_attn"
++        ):
++            parent = rows.get(parent["parent"])
++        if parent:
++            selected.append(row)
++    selected.sort(key=lambda row: row["logical"]["positions"][0])
++    if [row["logical"]["positions"][0] for row in selected] != [0, 1600]:
++        raise ValueError("unexpected captured partition domain")
++    fixture = {
++        name: torch.cat([load_tensor(root, row, key) for row in selected])
++        for name, key in [("x", "args.0"), ("a", "args.6"), ("b", "args.7")]
++    }
++    fixture.update(
++        {
++            name: load_tensor(root, selected[0], key)
++            for name, key in [("weight", "args.1"), ("alog", "args.8"), ("dt", "args.9")]
++        }
++    )
++    return fixture, {
++        "layer": layer,
++        "manifest_record_sha256": CAPTURE_SHA,
++        "calls": [row["index"] for row in selected],
++    }
++
++
++def exact(a, b):
++    import torch
++
++    return bool(torch.equal(a.contiguous().view(torch.uint8), b.contiguous().view(torch.uint8)))
++
++
++def comparison(a, b):
++    import torch
++
++    return {
++        "exact_bytes": exact(a, b),
++        "different_elements": int(torch.count_nonzero(a != b)),
++        "maximum_absolute": float((a.float() - b.float()).abs().max()) if a.numel() else 0.0,
++    }
++
++
++def classify(rows):
++    required = {"partition", "prefix", "native_recurrent", "future_gates", "empty_sequence"}
++    if not rows or not required.issubset({row.get("kind") for row in rows}):
++        return "INCOMPLETE"
++    if any(row.get("controls_ok") is not True for row in rows):
++        return "INVALID_CONTROL"
++    return "TESTED" if all(row.get("exact") is True for row in rows) else "DISCREPANCY"
++
++
++class Candidate:
++    def __init__(self, library, native, prepared_qk=False):
++        self.library = ctypes.CDLL(str(library))
++        self.conv = self.library.qwen_gdn_conv_raw
++        pointer, long, integer = ctypes.c_void_p, ctypes.c_long, ctypes.c_int
++        self.conv.argtypes = [
++            pointer,
++            long,
++            pointer,
++            pointer,
++            pointer,
++            long,
++            long,
++            long,
++            pointer,
++            long,
++            pointer,
++            pointer,
++            pointer,
++            long,
++            integer,
++            pointer,
++            pointer,
++            pointer,
++            pointer,
++            pointer,
++            pointer,
++            pointer,
++            pointer,
++            *([integer] * 7),
++            ctypes.c_float,
++            pointer,
++        ]
++        self.conv.restype = ctypes.c_int
++        self.prepared_qk = prepared_qk
++        self.scan = getattr(
++            self.library,
++            "qwen_gdn_causal_prefill_prepared" if prepared_qk else "qwen_gdn_causal_prefill",
++        )
++        self.scan.argtypes = (
++            [ctypes.c_void_p] * 9 + [ctypes.c_int] * 3 + [ctypes.c_float, ctypes.c_void_p]
++        )
++        self.scan.restype = ctypes.c_int
++        if prepared_qk:
++            self.normalize = self.library.qwen_gdn_normalize_qk
++            self.normalize.argtypes = [pointer] * 4 + [integer, ctypes.c_float, pointer]
++            self.normalize.restype = ctypes.c_int
++
++    def normalized(self, values, outputs=None, scale=128**-0.5):
++        import torch
++
++        if not self.prepared_qk:
++            return values
++        q, k, *rest = values
++        if outputs is None:
++            outputs = tuple(torch.empty_like(t, dtype=torch.float32) for t in (q, k))
++        status = self.normalize(
++            *[t.data_ptr() for t in (q, k, *outputs)],
++            q.numel() // 128,
++            float(scale),
++            torch.cuda.current_stream().cuda_stream,
++        )
++        if status:
++            raise RuntimeError(f"normalization failed: {status}")
++        return (*outputs, *rest)
++
++    def prepare(self, fixture, begin, end, conv_state, initialized):
++        import torch
++
++        # Keep row strides: gate projections are often two views of a packed BA tensor.
++        x, a, b = [fixture[key][begin:end] for key in ("x", "a", "b")]
++        length, heads, qheads = end - begin, 48, 16
++        q, k = [
++            torch.empty((length, qheads, 128), device="cuda", dtype=torch.bfloat16)
++            for _ in range(2)
++        ]
++        v = torch.empty((length, heads, 128), device="cuda", dtype=torch.bfloat16)
++        g, beta = [
++            torch.empty((length, heads), device="cuda", dtype=torch.float32) for _ in range(2)
++        ]
++        cu = torch.tensor([0, length], device="cuda", dtype=torch.int32)
++        idx = torch.tensor([1], device="cuda", dtype=torch.int32)
++        init = torch.tensor([initialized], device="cuda", dtype=torch.bool)
++        status = self.conv(
++            x.data_ptr(),
++            x.stride(0),
++            fixture["weight"].data_ptr(),
++            0,
++            conv_state.data_ptr(),
++            *conv_state.stride(),
++            idx.data_ptr(),
++            1,
++            init.data_ptr(),
++            a.data_ptr(),
++            b.data_ptr(),
++            a.stride(0),
++            a.dtype == torch.bfloat16,
++            fixture["alog"].data_ptr(),
++            fixture["dt"].data_ptr(),
++            q.data_ptr(),
++            k.data_ptr(),
++            v.data_ptr(),
++            g.data_ptr(),
++            beta.data_ptr(),
++            cu.data_ptr(),
++            1,
++            length,
++            heads,
++            qheads,
++            128,
++            128,
++            4,
++            20.0,
++            torch.cuda.current_stream().cuda_stream,
++        )
++        if status:
++            raise RuntimeError(f"raw convolution failed: {status}")
++        return q, k, v, g, beta
++
++    def recur(self, values, initial, cu=None):
++        import torch
++
++        q, k, v, g, beta = self.normalized(values)
++        if cu is None:
++            cu = torch.tensor([0, len(v)], device="cuda", dtype=torch.int32)
++        slab = torch.full((v.numel() + 512,), 37, device="cuda", dtype=torch.bfloat16)
++        output = slab[256:-256].view_as(v)
++        state_slab = torch.full((initial.numel() + 512,), 37, device="cuda", dtype=torch.float32)
++        final = state_slab[256:-256].view_as(initial)
++        before = initial.clone()
++        status = self.scan(
++            *[t.data_ptr() for t in (q, k, v, g, beta, initial, output, final, cu)],
++            len(cu) - 1,
++            48,
++            16,
++            128**-0.5,
++            torch.cuda.current_stream().cuda_stream,
++        )
++        torch.cuda.synchronize()
++        if status:
++            raise RuntimeError(f"causal recurrence failed: {status}")
++        controls = all(
++            bool((t == 37).all())
++            for t in (slab[:256], slab[-256:], state_slab[:256], state_slab[-256:])
++        )
++        controls &= exact(before, initial) and bool(torch.isfinite(output).all())
++        controls &= bool(torch.isfinite(final).all())
++        if not controls:
++            raise RuntimeError("guard, initial-state, or finite-value control failed")
++        return output, final
++
++
++def run(args):
++    # Torch must load its bundled ROCm runtime before either native extension.
++    import torch  # isort: skip
++
++    import r4d
++    import radiance_gdn as native
++
++    torch.set_grad_enabled(False)
++    torch.set_num_threads(1)
++    os.umask(0o077)
++    args.output.mkdir(mode=0o700)
++    build = private_json(args.build / "build.json")
++    authenticate(build)
++    binary = args.build / "candidate.so"
++    if hashlib.sha256(binary.read_bytes()).hexdigest() != build["binary_sha256"]:
++        raise ValueError("candidate library hash mismatch")
++    fixtures = [(f"captured_layer_{layer}", *captured(args.capture, layer)) for layer in (0, 1)]
++    rows, timing = [], []
++    with gpu_lease(args.output / "gpu-lease"):
++        candidate = Candidate(binary, native, args.prepared_qk)
++        for name, cpu, binding in fixtures:
++            fixture = {key: value.cuda() for key, value in cpu.items()}
++            length = len(fixture["x"])
++            initial = torch.zeros((1, 48, 128, 128), device="cuda", dtype=torch.float32)
++            conv_initial = torch.zeros((2, 10240, 3), device="cuda", dtype=torch.bfloat16)
++            conv = conv_initial.clone()
++            prepared = candidate.prepare(fixture, 0, length, conv, False)
++            output, final = candidate.recur(prepared, initial)
++            for widths in (
++                [1600, 449],
++                [1664, 385],
++                [1568, 481],
++                [1648, 401],
++                [1, 64, 128, 1856],
++                [64] * 32 + [1],
++            ):
++                state, history, outputs, begin = initial.clone(), conv_initial.clone(), [], 0
++                producer_exact = True
++                for width in widths:
++                    values = candidate.prepare(fixture, begin, begin + width, history, begin != 0)
++                    producer_exact &= all(
++                        exact(part, full[begin : begin + width])
++                        for part, full in zip(values, prepared, strict=True)
++                    )
++                    part, state = candidate.recur(values, state)
++                    outputs.append(part)
++                    begin += width
++                out_cmp, state_cmp = (
++                    comparison(torch.cat(outputs), output),
++                    comparison(state, final),
++                )
++                rows.append(
++                    {
++                        "fixture": name,
++                        "kind": "partition",
++                        "widths": widths,
++                        "producer_exact": producer_exact,
++                        "output": out_cmp,
++                        "state": state_cmp,
++                        "controls_ok": begin == length,
++                        "exact": producer_exact
++                        and exact(history, conv)
++                        and out_cmp["exact_bytes"]
++                        and state_cmp["exact_bytes"],
++                    }
++                )
++            for end in (1, 32, 48, 63, 64, 65, 129, 257):
++                history = conv_initial.clone()
++                values = candidate.prepare(fixture, 0, end, history, False)
++                short, state = candidate.recur(values, initial)
++                prefix_ok = all(
++                    exact(part, full[:end]) for part, full in zip(values, prepared, strict=True)
++                )
++                # Native recurrence stores each processed token to slot 1. This exercises
++                # its published state layout without allocating one long state per token.
++                bank = torch.zeros((2, 48, 128, 128), device="cuda", dtype=torch.float32)
++                native_out = torch.empty_like(short)
++                cu = torch.tensor([0, end], device="cuda", dtype=torch.int32)
++                sidx = torch.ones((1, end), device="cuda", dtype=torch.int32)
++                native.recurrent_update(
++                    *values[:3],
++                    fixture["a"][:end],
++                    fixture["b"][:end],
++                    fixture["alog"],
++                    fixture["dt"],
++                    bank,
++                    native_out,
++                    cu,
++                    sidx,
++                    None,
++                    1,
++                    48,
++                    16,
++                    128**-0.5,
++                )
++                torch.cuda.synchronize()
++                rows.append(
++                    {
++                        "fixture": name,
++                        "kind": "prefix",
++                        "tokens": end,
++                        "controls_ok": prefix_ok,
++                        "exact": exact(short, output[:end]),
++                    }
++                )
++                rows.append(
++                    {
++                        "fixture": name,
++                        "kind": "native_recurrent",
++                        "tokens": end,
++                        "output": comparison(short, native_out),
++                        "state": comparison(state[0], bank[1]),
++                        "controls_ok": True,
++                        "exact": exact(short, native_out) and exact(state[0], bank[1]),
++                    }
++                )
++            changed = {**fixture, "a": fixture["a"].clone(), "b": fixture["b"].clone()}
++            changed["a"][32:] = 20
++            changed["b"][32:] = -20
++            changed_values = candidate.prepare(changed, 0, length, conv_initial.clone(), False)
++            changed_output, _ = candidate.recur(changed_values, initial)
++            rows.append(
++                {
++                    "fixture": name,
++                    "kind": "future_gates",
++                    "tokens": 32,
++                    "controls_ok": not exact(changed_values[3][32:], prepared[3][32:]),
++                    "exact": exact(changed_output[:32], output[:32]),
++                }
++            )
++            # Resume from nonzero convolution/recurrent state with strided FP32 gates.
++            # This exercises the other gate ABI and a real M1 convolution oracle.
++            rng = torch.Generator().manual_seed(938)
++            history = (torch.randn((2, 10240, 3), generator=rng) * 0.01).to(
++                device="cuda", dtype=torch.bfloat16
++            )
++            nonzero = (torch.randn((1, 48, 128, 128), generator=rng) * 0.001).cuda()
++            gate_storage = torch.zeros((65, 103), device="cuda", dtype=torch.float32)
++            gate_storage[:, :48] = fixture["a"][:65]
++            gate_storage[:, 48:96] = fixture["b"][:65]
++            strided = {**fixture, "a": gate_storage[:, :48], "b": gate_storage[:, 48:96]}
++            prefix_history = history.clone()
++            resumed_values = candidate.prepare(strided, 0, 65, prefix_history, True)
++            resumed_out, resumed_state = candidate.recur(resumed_values, nonzero)
++            native_history = history.clone()
++            decoded = []
++            idx = torch.ones(1, device="cuda", dtype=torch.int32)
++            single_cu = torch.tensor([0, 1], device="cuda", dtype=torch.int32)
++            for token in range(65):
++                decoded.append(  # noqa: PERF401 - ordered calls mutate the same convolution state
++                    native.conv_update(
++                        fixture["x"][token : token + 1],
++                        fixture["weight"],
++                        None,
++                        native_history,
++                        3,
++                        idx,
++                        None,
++                        single_cu,
++                        1,
++                        1,
++                        48,
++                        16,
++                        1,
++                    )
++                )
++            rows.append(
++                {
++                    "fixture": name,
++                    "kind": "native_convolution",
++                    "controls_ok": True,
++                    "exact": exact(native_history, prefix_history)
++                    and all(
++                        exact(torch.cat([v[i] for v in decoded]), resumed_values[i])
++                        for i in range(3)
++                    ),
++                }
++            )
++            bank = torch.zeros((2, 48, 128, 128), device="cuda", dtype=torch.float32)
++            bank[1] = nonzero[0]
++            native_out = torch.empty_like(resumed_out)
++            resume_cu = torch.tensor([0, 65], device="cuda", dtype=torch.int32)
++            resume_idx = torch.ones((1, 65), device="cuda", dtype=torch.int32)
++            native.recurrent_update(
++                *resumed_values[:3],
++                strided["a"],
++                strided["b"],
++                fixture["alog"],
++                fixture["dt"],
++                bank,
++                native_out,
++                resume_cu,
++                resume_idx,
++                None,
++                1,
++                48,
++                16,
++                128**-0.5,
++            )
++            rows.append(
++                {
++                    "fixture": name,
++                    "kind": "native_recurrent",
++                    "tokens": 65,
++                    "nonzero_initial_state": True,
++                    "strided_fp32_gates": True,
++                    "controls_ok": strided["a"].stride(0) == 103,
++                    "output": comparison(resumed_out, native_out),
++                    "state": comparison(resumed_state[0], bank[1]),
++                    "exact": exact(resumed_out, native_out) and exact(resumed_state[0], bank[1]),
++                }
++            )
++            # Three sequences, including an empty middle sequence and nonzero initial state.
++            many = initial.expand(3, -1, -1, -1).clone()
++            many[1].fill_(0.125)
++            cu = torch.tensor([0, 63, 63, length], device="cuda", dtype=torch.int32)
++            multiple, multiple_state = candidate.recur(prepared, many, cu)
++            independently = [
++                candidate.recur(tuple(t[a:b].contiguous() for t in prepared), many[i : i + 1])
++                for i, (a, b) in enumerate(((0, 63), (63, 63), (63, length)))
++            ]
++            rows.append(
++                {
++                    "fixture": name,
++                    "kind": "empty_sequence",
++                    "controls_ok": True,
++                    "exact": exact(multiple_state[1], many[1])
++                    and exact(multiple, torch.cat([p[0] for p in independently]))
++                    and exact(multiple_state, torch.cat([p[1] for p in independently])),
++                }
++            )
++            samples = []
++            timing_cu = torch.tensor([0, length], device="cuda", dtype=torch.int32)
++            timing_values = candidate.normalized(prepared)
++            for _ in range(12):
++                start, finish = (
++                    torch.cuda.Event(enable_timing=True),
++                    torch.cuda.Event(enable_timing=True),
++                )
++                start.record()
++                # Measure the recurrence itself; allocation/guards are outside the timed region.
++                if args.prepared_qk:
++                    candidate.normalized(prepared, timing_values[:2])
++                status = candidate.scan(
++                    *[
++                        t.data_ptr()
++                        for t in (
++                            *timing_values,
++                            initial,
++                            output,
++                            final,
++                            timing_cu,
++                        )
++                    ],
++                    1,
++                    48,
++                    16,
++                    128**-0.5,
++                    torch.cuda.current_stream().cuda_stream,
++                )
++                finish.record()
++                finish.synchronize()
++                if status:
++                    raise RuntimeError(f"timed recurrence failed: {status}")
++                samples.append(start.elapsed_time(finish))
++            timing.append(
++                {
++                    "fixture": name,
++                    "tokens": length,
++                    "normalization_and_scan_median_ms": statistics.median(samples[2:]),
++                    "binding": binding,
++                }
++            )
++            write_private(args.output / f"{name}.json", seal({"rows": rows, "timing": timing}))
++        report = seal(
++            {
++                "status": classify(rows),
++                "rows": rows,
++                "timing": timing,
++                "build": build["sha256"],
++                "binary": build["binary_sha256"],
++                "r4d_sha256": hashlib.sha256(Path(r4d.__file__).read_bytes()).hexdigest(),
++                "native_wrapper_sha256": hashlib.sha256(
++                    Path(native.__file__).read_bytes()
++                ).hexdigest(),
++                "probe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
++                "prepared_fp32_qk": args.prepared_qk,
++                "scope": (
++                    "Two synthetic captured layers; causal raw preparation and recurrence. "
++                    "Not a whole-model proof."
++                ),
++            }
++        )
++        write_private(args.output / "result.json", report)
++        print(
++            json.dumps(
++                {
++                    "status": report["status"],
++                    "comparisons": len(rows),
++                    "exact": sum(row["exact"] for row in rows),
++                    "timing": timing,
++                    "result_sha256": report["sha256"],
++                }
++            ),
++            flush=True,
++        )
++    return 0 if report["status"] == "TESTED" else 2
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--build", type=Path, required=True)
++    parser.add_argument("--capture", type=Path, required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    parser.add_argument("--allow-gpu", action="store_true", required=True)
++    parser.add_argument("--prepared-qk", action="store_true")
++    raise SystemExit(run(parser.parse_args()))
+diff --git a/experimental/causal_gdn_prefill/raw_convolution.hip b/experimental/causal_gdn_prefill/raw_convolution.hip
+new file mode 100644
+index 0000000..a21dfce
+--- /dev/null
++++ b/experimental/causal_gdn_prefill/raw_convolution.hip
+@@ -0,0 +1,434 @@
++// r4d_gdn_conv_w4_h128_bf16.hip -- the gated-delta-net depthwise causal convolution and the work fused around
++// it, one entry point per serving phase.
++//
++// PREFILL (r4d_gdn_conv_prep): everything the layer does between the qkv projection and the
++// chunked scan, in one kernel:
++//
++//     conv(x)        depthwise causal convolution, width 4, silu, varlen, with the conv-state
++//                    cache read at a sequence's first chunk and rewritten from its last tokens
++//     split          the packed [q | k | v] channel range into three contiguous tensors
++//     l2norm         over each 128-dim q and k head
++//     gate           g = -exp(A_log) . softplus(a + dt_bias), beta = sigmoid(b)
++//     cumsum         g summed along the chunk, which is what the scan actually consumes
++//
++// It replaces causal_conv1d_fn + fused_post_conv_prep + chunk_local_cumsum. The pair it replaces
++// spends most of its time moving the conv output: causal_conv1d_fn writes all conv_dim channels of
++// every token to HBM and fused_post_conv_prep reads every one of them straight back, which at this
++// model's shape is 34 MB out and 34 MB in per layer per rank for a tensor that is dead two
++// microseconds later. Here the conv output only ever exists in registers.
++//
++// The layout falls out of the l2norm. A workgroup is HPB waves, one wave per 128-dim head, one
++// lane per four dims -- so the norm of a head is a wave reduction with no LDS and no barrier, and
++// four contiguous bf16 per lane is one 8-byte access on both sides. Channel groups are counted in
++// heads rather than in channels so that a group never straddles the q/k/v boundaries (they fall on
++// head multiples at every tensor-parallel size).
++//
++// Tokens are blocked by the chunk, 64, because the cumsum is per chunk: the whole scan is then a
++// wave-level prefix over 32 lanes holding two tokens each, and no workgroup needs another's
++// partial sums. The conv reads three tokens of halo per block, 4.7% of the traffic, which is
++// cheaper than the barrier a shared staging buffer would need.
++//
++// The conv output is rounded to bf16 BEFORE the norm and the store, which is what the two kernels
++// it replaces do (the conv writes a bf16 tensor and the prep reads it back). Keeping the fp32
++// accumulator through the norm would be slightly finer and slightly different; matching is worth
++// more than the last half ULP here, because it makes this kernel a drop-in that can be A/B'd
++// against the pair on real weights.
++#include <hip/hip_runtime.h>
++#include "r4d.h"
++#include "r4d_gdn_wmma.h"
++
++#define CP_HD    128            // dims per head, q k and v alike
++#define CP_BT     64            // token block = the scan's chunk, so the cumsum stays wave-local
++#define CP_W       4            // conv width
++#define CP_ST   (CP_W - 1)      // conv state depth
++// CU_MAXT: tokens the DECODE update pre-loads into registers. Slower at 16, 10.6 us against
++// 9.4: the sixteen ushort4 cost more in register pressure and predicated-load exec-mask work
++// than the round trips they hide, and the compiler was already batching the loop's loads.
++// 1 disables it (slen is num_spec+1 > 1 on every speculative step).
++#ifndef CU_MAXT
++#define CU_MAXT 1
++#endif
++// WVEC: read a channel's CP_W conv weights as one vector load instead of CP_W scalar ones.
++#ifndef WVEC
++#define WVEC 1
++#endif
++#define CP_DPL     4            // dims per lane (CP_HD / 32)
++
++__device__ __forceinline__ float cp_silu(float z) {
++  return z / (1.0f + __expf(-z));
++}
++
++// softplus, in the two-sided form FLA uses, with the same large-x cutoff
++__device__ __forceinline__ float cp_softplus(float x, float thr) {
++  if (x > thr) return x;
++  return (x > 0.0f) ? (x + __logf(1.0f + __expf(-x)))
++                    : __logf(1.0f + __expf(x));
++}
++
++// a and b arrive as the layer holds them: a chunk() of the ba projection, so bf16 and strided by
++// 2*H, not the fp32 contiguous pair FLA's own kernels are usually handed. Reading them where they
++// lie is what keeps this a single kernel -- a .float().contiguous() per tensor per layer would put
++// two more launches and 0.6 MB back on the path this exists to shorten.
++template <int ABF16>
++__device__ __forceinline__ float cp_ab(const void* p, size_t i) {
++  return ABF16 ? bf2f(((const unsigned short*)p)[i]) : ((const float*)p)[i];
++}
++
++template <int HPB, int ABF16>
++__global__ __launch_bounds__(HPB * 32)
++void r4d_gdn_conv_prep_kernel(const unsigned short* __restrict__ x, long xpitch,
++                              const unsigned short* __restrict__ wgt,
++                              const unsigned short* __restrict__ bias,
++                              unsigned short* __restrict__ cstate,
++                              long cs_seq, long cs_dim, long cs_tok,
++                              const int* __restrict__ cache_idx, long ci_stride,
++                              const unsigned char* __restrict__ has_init,
++                              const void* __restrict__ av, const void* __restrict__ bv,
++                              long ab_stride,
++                              const float* __restrict__ A_log, const float* __restrict__ dt_bias,
++                              unsigned short* __restrict__ q, unsigned short* __restrict__ k,
++                              unsigned short* __restrict__ v,
++                              float* __restrict__ go, float* __restrict__ beta,
++                              const int* __restrict__ cu, int N, int H, int Hg, float sp_thr)
++{
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++
++  // flat chunk id -> (sequence, chunk); see r4d_gdn_kkt_solve_k128_c64_bf16.hip for why the grid is an upper
++  // bound rather than the exact count
++  int n = -1, t0 = 0, bos = 0, rows = 0, slen = 0;
++  {
++    int acc = 0, want = blockIdx.x;
++    for (int i = 0; i < N; ++i) {
++      const int b = cu[i], e = cu[i + 1];
++      const int nc = (e - b + CP_BT - 1) / CP_BT;
++      if (want < acc + nc) { n = i; bos = b; slen = e - b; t0 = (want - acc) * CP_BT;
++                             rows = min(CP_BT, slen - t0); break; }
++      acc += nc;
++    }
++    if (n < 0) return;
++  }
++  const bool first = (t0 == 0);
++
++  // ---- the gating half, on one workgroup per chunk ----------------------------------------
++  // g and beta come from a and b alone, so this is independent of the convolution; it rides on
++  // the y == 0 workgroup rather than costing a launch of its own.
++  if (blockIdx.y == 0) {
++    for (int hv = warp; hv < H; hv += HPB) {
++      const float alog = __expf(A_log[hv]), dtb = dt_bias[hv];
++      const int i0 = 2 * lane, i1 = i0 + 1;
++      float g0 = 0.0f, g1 = 0.0f;
++      if (i0 < rows)
++        g0 = -alog * cp_softplus(cp_ab<ABF16>(av, (size_t)(bos + t0 + i0) * ab_stride + hv)
++                                 + dtb, sp_thr);
++      if (i1 < rows)
++        g1 = -alog * cp_softplus(cp_ab<ABF16>(av, (size_t)(bos + t0 + i1) * ab_stride + hv)
++                                 + dtb, sp_thr);
++      if (i0 < rows) {
++        go[(size_t)(bos + t0 + i0) * H + hv] = g0;
++        beta[(size_t)(bos + t0 + i0) * H + hv] = 1.0f / (1.0f + __expf(
++            -cp_ab<ABF16>(bv, (size_t)(bos + t0 + i0) * ab_stride + hv)));
++      }
++      if (i1 < rows) {
++        go[(size_t)(bos + t0 + i1) * H + hv] = g1;
++        beta[(size_t)(bos + t0 + i1) * H + hv] = 1.0f / (1.0f + __expf(
++            -cp_ab<ABF16>(bv, (size_t)(bos + t0 + i1) * ab_stride + hv)));
++      }
++    }
++  }
++
++  // ---- the convolution half ----------------------------------------------------------------
++  const int unit = blockIdx.y * HPB + warp;       // global 128-dim head unit
++  const int d0 = unit * CP_HD + lane * CP_DPL;    // this lane's first channel
++  const unsigned short* xp = x + (size_t)(bos + t0) * xpitch + d0;
++
++  float wt[CP_W][CP_DPL], bs[CP_DPL];
++#pragma unroll
++  for (int c = 0; c < CP_DPL; ++c) {
++#pragma unroll
++    for (int i = 0; i < CP_W; ++i) wt[i][c] = bf2f(wgt[(size_t)(d0 + c) * CP_W + i]);
++    bs[c] = bias ? bf2f(bias[d0 + c]) : 0.0f;
++  }
++
++  // window[i] holds x[t - (W-1) + i]; seed it from the previous tokens, or from the conv state
++  // cache when this is the first chunk of the sequence
++  float win[CP_W][CP_DPL];
++  {
++    const bool init = first && has_init && has_init[n];
++    const unsigned short* sp = init ? (cstate + (size_t)cache_idx[(size_t)n * ci_stride] * cs_seq
++                                       + (size_t)d0 * cs_dim) : nullptr;
++#pragma unroll
++    for (int i = 0; i < CP_ST; ++i) {              // i = 0,1,2  ->  x[t0-3+i]
++      const int src = t0 - CP_ST + i;
++#pragma unroll
++      for (int c = 0; c < CP_DPL; ++c) {
++        float val = 0.0f;
++        if (src >= 0) val = bf2f(x[(size_t)(bos + src) * xpitch + d0 + c]);
++        else if (init) val = bf2f(sp[(size_t)c * cs_dim + (size_t)(CP_ST + src) * cs_tok]);
++        win[i][c] = val;
++      }
++    }
++  }
++
++  // ---- write the new conv state, from x, at the sequence's first chunk ---------------------
++  // Ordering: the cache line is updated in place, so the read above and this write must be in the
++  // same workgroup for the same channels -- which they are, and this is why the FIRST chunk owns
++  // the write even though the tokens it stores belong to the last one.
++  if (first && cache_idx) {
++    unsigned short* sp = cstate + (size_t)cache_idx[(size_t)n * ci_stride] * cs_seq
++                       + (size_t)d0 * cs_dim;
++    const bool init = has_init && has_init[n];
++    // Channel-major, because the cache is [dim][slot] with the slot contiguous: this lane owns
++    // CP_DPL consecutive channels, so its CP_DPL*CP_ST shorts are one contiguous run and the wave
++    // covers 32 of those back to back. The slot-major order this replaces made every store a
++    // strided 2-byte scalar.
++#pragma unroll
++    for (int c = 0; c < CP_DPL; ++c) {
++#pragma unroll
++      for (int i = 0; i < CP_ST; ++i) {
++        const int src = slen - CP_ST + i;
++        unsigned short val = 0;
++        if (src >= 0) val = x[(size_t)(bos + src) * xpitch + d0 + c];
++        else if (init) val = sp[(size_t)c * cs_dim + (size_t)(CP_ST + src) * cs_tok];
++        sp[(size_t)c * cs_dim + (size_t)i * cs_tok] = val;
++      }
++    }
++  }
++
++  const int hq = unit, hk = unit - Hg, hv = unit - 2 * Hg;
++  const int region = (unit < Hg) ? 0 : ((unit < 2 * Hg) ? 1 : 2);
++
++  for (int t = 0; t < rows; ++t) {
++    float o[CP_DPL];
++    {
++      const unsigned short* xr = xp + (size_t)t * xpitch;
++      const ushort4 raw = *(const ushort4*)xr;
++      win[CP_W - 1][0] = bf2f(raw.x); win[CP_W - 1][1] = bf2f(raw.y);
++      win[CP_W - 1][2] = bf2f(raw.z); win[CP_W - 1][3] = bf2f(raw.w);
++    }
++#pragma unroll
++    for (int c = 0; c < CP_DPL; ++c) {
++      float acc = bs[c];
++#pragma unroll
++      for (int i = 0; i < CP_W; ++i) acc += wt[i][c] * win[i][c];
++      // the pair this replaces rounds here, on the way to HBM; keep that
++      o[c] = bf2f(f2bf(cp_silu(acc)));
++    }
++
++    if (region < 2) {
++      const float inv = 1.0f; // Normalize in the recurrent kernel.
++      unsigned short* dst = (region ? k : q)
++                          + ((size_t)(bos + t0 + t) * Hg + (region ? hk : hq)) * CP_HD
++                          + lane * CP_DPL;
++      *(ushort4*)dst = make_ushort4(f2bf(o[0] * inv), f2bf(o[1] * inv),
++                                    f2bf(o[2] * inv), f2bf(o[3] * inv));
++    } else {
++      unsigned short* dst = v + ((size_t)(bos + t0 + t) * H + hv) * CP_HD + lane * CP_DPL;
++      *(ushort4*)dst = make_ushort4(f2bf(o[0]), f2bf(o[1]), f2bf(o[2]), f2bf(o[3]));
++    }
++
++#pragma unroll
++    for (int i = 0; i < CP_W - 1; ++i)
++#pragma unroll
++      for (int c = 0; c < CP_DPL; ++c) win[i][c] = win[i + 1][c];
++  }
++}
++
++extern "C" int qwen_gdn_conv_raw(
++    const void* x, long xpitch, const void* wgt, const void* bias, void* cstate,
++    long cs_seq, long cs_dim, long cs_tok, const void* cache_idx, long ci_stride,
++    const void* has_init,
++    const void* a, const void* b, long ab_stride, int ab_is_bf16, const void* A_log,
++    const void* dt_bias, void* q, void* k, void* v, void* g, void* beta, const void* cu,
++    int N, int T, int H, int Hg, int K, int V, int width, float softplus_thr, void* stream)
++{
++  if (K != CP_HD || V != CP_HD || width != CP_W) return -1;
++  const int units = 2 * Hg + H;
++  int hpb = 8;
++  while (hpb > 1 && (Hg % hpb || H % hpb)) hpb >>= 1;
++  const int nchunk_ub = (T + CP_BT - 1) / CP_BT + N;
++  dim3 grid(nchunk_ub, units / hpb), blk(hpb * 32);
++#define CP_LAUNCH(P, AB)                                                                      \
++  hipLaunchKernelGGL((r4d_gdn_conv_prep_kernel<P, AB>), grid, blk, 0, (hipStream_t)stream,     \
++                     (const unsigned short*)x, xpitch, (const unsigned short*)wgt,            \
++                     (const unsigned short*)bias, (unsigned short*)cstate,                    \
++                     cs_seq, cs_dim, cs_tok, (const int*)cache_idx, ci_stride,                \
++                     (const unsigned char*)has_init, a, b, ab_stride,                         \
++                     (const float*)A_log, (const float*)dt_bias, (unsigned short*)q,          \
++                     (unsigned short*)k, (unsigned short*)v, (float*)g, (float*)beta,         \
++                     (const int*)cu, N, H, Hg, softplus_thr)
++#define CP_SWITCH(AB)                                                                         \
++  switch (hpb) {                                                                              \
++    case 8: CP_LAUNCH(8, AB); break;                                                          \
++    case 4: CP_LAUNCH(4, AB); break;                                                          \
++    case 2: CP_LAUNCH(2, AB); break;                                                          \
++    default: CP_LAUNCH(1, AB); break;                                                         \
++  }
++  if (ab_is_bf16) { CP_SWITCH(1); } else { CP_SWITCH(0); }
++#undef CP_SWITCH
++#undef CP_LAUNCH
++  return (int)hipGetLastError();
++}
++
++// ---------------------------------------------------------------------------------------------
++// The decode-time convolution. Same depthwise causal filter, but the tokens of a step are a
++// speculative window rather than a chunk, and the state cache is a rolling buffer of
++// width-1 + num_spec entries rather than width-1: a step reads its window starting at the slot
++// the last ACCEPTED token left behind, and rewrites the buffer shifted by one so the next step
++// can do the same. That offset is the only thing the caller has to get right, and it is why this
++// is a separate entry point rather than a flag on the one above.
++//
++// It writes q, k and v in their own layouts, which also deletes the torch.cat the layer used to
++// need to make the three views contiguous for the recurrent kernel.
++// ---------------------------------------------------------------------------------------------
++template <int HPB>
++__global__ __launch_bounds__(HPB * 32)
++void r4d_gdn_conv_update_kernel(const unsigned short* __restrict__ x, long xpitch,
++                                const unsigned short* __restrict__ wgt,
++                                const unsigned short* __restrict__ bias,
++                                unsigned short* __restrict__ cstate,
++                                long cs_seq, long cs_dim, long cs_tok, int state_len_max,
++                                const int* __restrict__ cache_idx, long ci_stride,
++                                const int* __restrict__ naccept,
++                                unsigned short* __restrict__ q, unsigned short* __restrict__ k,
++                                unsigned short* __restrict__ v,
++                                const int* __restrict__ cu, int H, int Hg, int maxq)
++{
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int n = blockIdx.x;
++  const int bos = cu[n], slen = cu[n + 1] - bos;
++  if (slen <= 0) return;
++  const int slot = cache_idx[(size_t)n * ci_stride];
++  if (slot <= 0) return;                          // NULL_BLOCK_ID / pad slot
++
++  const int off = naccept ? (naccept[n] - 1) : 0;
++  // the cache depth this step actually uses; FLA shrinks the caller's max_query_len bound by the
++  // tokens this sequence did not bring
++  const int slen_eff = state_len_max - (maxq - slen);
++
++  const int unit = blockIdx.y * HPB + warp;
++  const int d0 = unit * CP_HD + lane * CP_DPL;
++
++  // The weight of one channel is CP_W contiguous shorts, so a lane's four channels are four
++  // vector loads, not sixteen scalar ones.
++  float wt[CP_W][CP_DPL], bs[CP_DPL];
++#pragma unroll
++  for (int c = 0; c < CP_DPL; ++c) {
++    if (WVEC && CP_W == 4) {
++      const ushort4 w4 = *(const ushort4*)(wgt + (size_t)(d0 + c) * CP_W);
++      const unsigned short* ws = (const unsigned short*)&w4;
++#pragma unroll
++      for (int i = 0; i < CP_W; ++i) wt[i][c] = bf2f(ws[i]);
++    } else {
++#pragma unroll
++      for (int i = 0; i < CP_W; ++i) wt[i][c] = bf2f(wgt[(size_t)(d0 + c) * CP_W + i]);
++    }
++    bs[c] = bias ? bf2f(bias[d0 + c]) : 0.0f;
++  }
++
++  unsigned short* sp = cstate + (size_t)slot * cs_seq + (size_t)d0 * cs_dim;
++  float win[CP_W][CP_DPL];
++  unsigned short hist[CP_ST][CP_DPL];             // the raw history, for the shifted rewrite
++#pragma unroll
++  for (int i = 0; i < CP_ST; ++i)
++#pragma unroll
++    for (int c = 0; c < CP_DPL; ++c) {
++      const unsigned short raw = sp[(size_t)c * cs_dim + (size_t)(off + i) * cs_tok];
++      hist[i][c] = raw;
++      win[i][c] = bf2f(raw);
++    }
++
++  const int hq = unit, hk = unit - Hg, hv = unit - 2 * Hg;
++  const int region = (unit < Hg) ? 0 : ((unit < 2 * Hg) ? 1 : 2);
++
++  // This step's inputs, all issued before the first is waited on. With the load inside the loop
++  // each of the (num_spec + 1) four-tap taps pays an HBM round trip that nothing hides: a decode
++  // step launches one wave per channel group, so there is no other wave on the SIMD to run
++  // meanwhile. They are also exactly the values the cache rewrite at the bottom re-reads.
++  ushort4 xb[CU_MAXT];
++  const bool xpre = (slen <= CU_MAXT);
++#pragma unroll
++  for (int t = 0; t < CU_MAXT; ++t)
++    if (xpre && t < slen) xb[t] = *(const ushort4*)(x + (size_t)(bos + t) * xpitch + d0);
++
++  for (int t = 0; t < slen; ++t) {
++    const ushort4 raw = xpre ? xb[t]
++                             : *(const ushort4*)(x + (size_t)(bos + t) * xpitch + d0);
++    win[CP_W - 1][0] = bf2f(raw.x); win[CP_W - 1][1] = bf2f(raw.y);
++    win[CP_W - 1][2] = bf2f(raw.z); win[CP_W - 1][3] = bf2f(raw.w);
++
++    unsigned short out[CP_DPL];
++#pragma unroll
++    for (int c = 0; c < CP_DPL; ++c) {
++      float acc = bs[c];
++#pragma unroll
++      for (int i = 0; i < CP_W; ++i) acc += wt[i][c] * win[i][c];
++      out[c] = f2bf(cp_silu(acc));
++    }
++    unsigned short* dst = (region == 2)
++        ? (v + ((size_t)(bos + t) * H + hv) * CP_HD + lane * CP_DPL)
++        : ((region ? k : q) + ((size_t)(bos + t) * Hg + (region ? hk : hq)) * CP_HD
++           + lane * CP_DPL);
++    *(ushort4*)dst = make_ushort4(out[0], out[1], out[2], out[3]);
++
++#pragma unroll
++    for (int i = 0; i < CP_W - 1; ++i)
++#pragma unroll
++      for (int c = 0; c < CP_DPL; ++c) win[i][c] = win[i + 1][c];
++  }
++
++  // Rewrite the cache shifted by one: the tail of the old history, then this step's tokens. The
++  // first CP_ST-1 entries are exactly the history already in registers, so the rewrite costs no
++  // extra reads -- and reading before writing is what makes the in-place update safe.
++  // Channel-major for the same reason as the prefill path, and it matters more here: this is
++  // width-1 + num_spec slots per channel, so the slot-major order made it 44 strided 2-byte
++  // stores per lane where channel-major is one 88-byte run.
++  const int VAL = CP_W - 2;
++#pragma unroll
++  for (int c = 0; c < CP_DPL; ++c) {
++    unsigned short* dst = sp + (size_t)c * cs_dim;
++    for (int i = 0; i < slen_eff; ++i) {
++      unsigned short val;
++      if (i + slen < slen_eff) {
++        val = hist[i + 1][c];
++      } else {
++        const int ti = i - VAL;
++        val = (xpre && ti >= 0 && ti < slen)
++                  ? ((const unsigned short*)&xb[ti])[c]
++                  : x[(size_t)(bos + ti) * xpitch + d0 + c];
++      }
++      dst[(size_t)i * cs_tok] = val;
++    }
++  }
++}
++
++extern "C" int qwen_gdn_conv_update_reference(
++    const void* x, long xpitch, const void* wgt, const void* bias, void* cstate,
++    long cs_seq, long cs_dim, long cs_tok, int state_len_max, const void* cache_idx,
++    long ci_stride, const void* num_accepted, void* q, void* k, void* v, const void* cu,
++    int N, int H, int Hg, int K, int V, int width, int max_query_len, void* stream)
++{
++  if (K != CP_HD || V != CP_HD || width != CP_W) return -1;
++  const int units = 2 * Hg + H;
++  int hpb = 8;
++  while (hpb > 1 && (Hg % hpb || H % hpb)) hpb >>= 1;
++  // A decode step is a handful of sequences, so the channel grouping is what decides whether the
++  // grid covers the device: at 8 sequences and 8 heads per block this launches 40 workgroups for
++  // 64 CUs. Narrow the block until there are enough of them.
++  while (hpb > 1 && (long)N * (units / hpb) < 256) hpb >>= 1;
++  dim3 grid(N, units / hpb), blk(hpb * 32);
++#define CU_LAUNCH(P)                                                                          \
++  hipLaunchKernelGGL((r4d_gdn_conv_update_kernel<P>), grid, blk, 0, (hipStream_t)stream,      \
++                     (const unsigned short*)x, xpitch, (const unsigned short*)wgt,            \
++                     (const unsigned short*)bias, (unsigned short*)cstate, cs_seq, cs_dim,    \
++                     cs_tok, state_len_max, (const int*)cache_idx, ci_stride,                 \
++                     (const int*)num_accepted, (unsigned short*)q, (unsigned short*)k,        \
++                     (unsigned short*)v, (const int*)cu, H, Hg, max_query_len)
++  switch (hpb) {
++    case 8: CU_LAUNCH(8); break;
++    case 4: CU_LAUNCH(4); break;
++    case 2: CU_LAUNCH(2); break;
++    default: CU_LAUNCH(1); break;
++  }
++#undef CU_LAUNCH
++  return (int)hipGetLastError();
++}
+-- 
+2.55.0
+

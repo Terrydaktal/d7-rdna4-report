@@ -1,0 +1,33 @@
+{
+  "upstream": "https://codeberg.org/StillDeadcode/libr4d",
+  "status": "Prepared experimental submissions; not yet open on Codeberg",
+  "patches": [
+    {
+      "name": "attention",
+      "branch": "fix/query-isolated-m8-attention",
+      "commit": "a44607ac8289a6b6e4a4a2bb320864113b8f841c",
+      "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
+      "patch": "attention.patch",
+      "sha256": "ebd09fe2a6147500244fd1efe05ad66878b12a4c0933f4c0032b3dda94a1cbf5",
+      "codeberg_pr_open": false
+    },
+    {
+      "name": "causal-prefill",
+      "branch": "fix/causal-gdn-prefill",
+      "commit": "6596517ef4ca813a0066f410623787bac2209afa",
+      "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
+      "patch": "causal-prefill.patch",
+      "sha256": "b9a6cdfa3547f132279a18c220c01cfddabb423edca04629bff3d37e8d475d90",
+      "codeberg_pr_open": false
+    },
+    {
+      "name": "serial-gdn-contract",
+      "branch": "fix/serial-contract-gdn",
+      "commit": "5d03c0f1f59837bfd41cc5b9f7f6a248ca2ec37e",
+      "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
+      "patch": "serial-gdn-contract.patch",
+      "sha256": "a01410b1f0070f82dc79863fd4f68650285f4736a1cd3f5409cff68f8052ba65",
+      "codeberg_pr_open": false
+    }
+  ]
+}

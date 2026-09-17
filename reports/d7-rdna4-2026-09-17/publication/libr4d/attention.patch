@@ -1,0 +1,1294 @@
+From a44607ac8289a6b6e4a4a2bb320864113b8f841c Mon Sep 17 00:00:00 2001
+From: Terrydaktal <9lewis9@gmail.com>
+Date: Thu, 17 Sep 2026 05:31:31 +0100
+Subject: [PATCH] Add experimental query-isolated M8 attention with shared KV
+ reads
+
+Preserve each query's serial softmax and merge decisions while sharing KV loads across the eight verification rows. Replace wave-wide decision coupling with per-query six-head ballots, split row groups at the 16-token boundary and retain query-specific causal merge extents.
+
+Publish the qualified downstream transformer, ABI wrapper and native probe beside the generated experimental translation unit. Add source-bound current-header compilation and its recorded successful CPU-only build, with explicit separation from the completed pinned downstream GPU checks. Keep the production dispatcher unchanged until the new header binding and full integration are qualified.
+
+Validation: current-header HIP compilation passed without GPU execution; generated source and copied helper identities verified; no private traces or binaries included. The separate pinned implementation passed 192 query positions, causal interventions and graph checks, and was part of the completed 10K compiled model comparison.
+Signed-off-by: Terrydaktal <9lewis9@gmail.com>
+---
+ experimental/m1_m8/.gitignore                 |   9 +
+ experimental/m1_m8/BUILD_INPUTS.json          |  11 +
+ experimental/m1_m8/PUBLICATION_BUILD.json     |  35 ++
+ experimental/m1_m8/README.md                  |  52 ++
+ experimental/m1_m8/SOURCE_PROVENANCE.json     |  18 +
+ experimental/m1_m8/build.py                   |  52 ++
+ .../m1_m8/build_stock_m1_attention_shared.py  | 153 ++++++
+ .../m1_m8/probe_stock_m1_attention_shared.py  | 227 ++++++++
+ experimental/m1_m8/shared_attention.hip       | 502 ++++++++++++++++++
+ .../m1_m8/stock_m1_attention_shared.py        | 137 +++++
+ 10 files changed, 1196 insertions(+)
+ create mode 100644 experimental/m1_m8/.gitignore
+ create mode 100644 experimental/m1_m8/BUILD_INPUTS.json
+ create mode 100644 experimental/m1_m8/PUBLICATION_BUILD.json
+ create mode 100644 experimental/m1_m8/README.md
+ create mode 100644 experimental/m1_m8/SOURCE_PROVENANCE.json
+ create mode 100644 experimental/m1_m8/build.py
+ create mode 100644 experimental/m1_m8/build_stock_m1_attention_shared.py
+ create mode 100644 experimental/m1_m8/probe_stock_m1_attention_shared.py
+ create mode 100644 experimental/m1_m8/shared_attention.hip
+ create mode 100644 experimental/m1_m8/stock_m1_attention_shared.py
+
+diff --git a/experimental/m1_m8/.gitignore b/experimental/m1_m8/.gitignore
+new file mode 100644
+index 0000000..8e454e1
+--- /dev/null
++++ b/experimental/m1_m8/.gitignore
+@@ -0,0 +1,9 @@
++__pycache__/
++.pytest_cache/
++.ruff_cache/
++*.so
++*.hsaco
++*.pyc
++*.pt
++*.jsonl
++build/
+diff --git a/experimental/m1_m8/BUILD_INPUTS.json b/experimental/m1_m8/BUILD_INPUTS.json
+new file mode 100644
+index 0000000..ea76274
+--- /dev/null
++++ b/experimental/m1_m8/BUILD_INPUTS.json
+@@ -0,0 +1,11 @@
++{
++  "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
++  "translation_unit": "shared_attention.hip",
++  "extra_flags": [],
++  "files": {
++    "r4d.h": "a3af49b29e6423b68426b695470c2c9cbdd9c8815836ab0e7be2d883e81188cd",
++    "r4d_common.h": "16db14fa42e7377c39641a3abea6d2ca524bb3a33e2a8afc55e9ccd3f5c0bacd",
++    "r4d_dt16.h": "b61525f1dbb6b272642e0e1410a3d753d1136ed87eb07cefca512843096c4c24",
++    "experimental/m1_m8/shared_attention.hip": "424dadf7eebd61bd9c161355416954b7ccf2e36c516e4eccd5a481a5c1652786"
++  }
++}
+diff --git a/experimental/m1_m8/PUBLICATION_BUILD.json b/experimental/m1_m8/PUBLICATION_BUILD.json
+new file mode 100644
+index 0000000..4c68fdd
+--- /dev/null
++++ b/experimental/m1_m8/PUBLICATION_BUILD.json
+@@ -0,0 +1,35 @@
++{
++  "status": "BUILT_UNTESTED",
++  "gpu_used": false,
++  "scope": "CPU compilation only; current-header native execution is not qualified",
++  "returncode": 0,
++  "source_inputs": {
++    "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
++    "translation_unit": "shared_attention.hip",
++    "extra_flags": [],
++    "files": {
++      "r4d.h": "a3af49b29e6423b68426b695470c2c9cbdd9c8815836ab0e7be2d883e81188cd",
++      "r4d_common.h": "16db14fa42e7377c39641a3abea6d2ca524bb3a33e2a8afc55e9ccd3f5c0bacd",
++      "r4d_dt16.h": "b61525f1dbb6b272642e0e1410a3d753d1136ed87eb07cefca512843096c4c24",
++      "experimental/m1_m8/shared_attention.hip": "424dadf7eebd61bd9c161355416954b7ccf2e36c516e4eccd5a481a5c1652786"
++    }
++  },
++  "build_script_sha256": "ba860da2c8b2543b52afcbd2c6ae908706713432cface0dc25cb449f157e78f9",
++  "command": [
++    "/opt/rocm/bin/hipcc",
++    "-O3",
++    "-std=c++17",
++    "--offload-arch=gfx1201",
++    "-shared",
++    "-fPIC",
++    "-ffp-contract=off",
++    "-Wall",
++    "-Wextra",
++    "-I",
++    "/qualification/preflight/libr4d-publication-20260917-01/attention",
++    "/qualification/preflight/libr4d-publication-20260917-01/attention/experimental/m1_m8/shared_attention.hip",
++    "-o",
++    "/qualification/preflight/libr4d-publication-20260917-01/attention-build/candidate.so"
++  ],
++  "binary_sha256": "6649f12942864f395c23c407e8161d3ed0551a323f70d7fca309ff881e0929ce"
++}
+diff --git a/experimental/m1_m8/README.md b/experimental/m1_m8/README.md
+new file mode 100644
+index 0000000..bf8ddc7
+--- /dev/null
++++ b/experimental/m1_m8/README.md
+@@ -0,0 +1,52 @@
++# Query-isolated M8 attention with shared KV reads
++
++Eight queries can share KV reads while retaining each query's serial softmax
++rescaling and split/merge decisions. The existing wave-wide ballot lets another
++query change those decisions, introducing a different arithmetic path.
++
++This experimental translation unit gives each query its own six-head ballot,
++groups rows at the 16-token tile boundary and uses that query's causal context
++in the merge. It retains the serial dot-product/reduction expressions. The
++existing public dispatcher is not changed.
++
++```text
++experimental/m1_m8/
++├── shared_attention.hip              # generated candidate and explicit C entry point
++├── build.py                         # source-bound current-header compilation
++├── BUILD_INPUTS.json                 # exact compilation input hashes
++├── build_stock_m1_attention_shared.py # preserved qualified-source transformer
++├── stock_m1_attention_shared.py       # qualified ABI and tensor admission wrapper
++├── probe_stock_m1_attention_shared.py # exact output, causality, guards and graph probe
++└── SOURCE_PROVENANCE.json            # downstream source identities
++```
++
++From the repository root, compile on a machine with ROCm:
++
++```sh
++uv run --no-project python experimental/m1_m8/build.py --output /tmp/r4d-shared-m8
++```
++
++The output directory must be new. Compilation produces `candidate.so`,
++`compiler.log` and `build.json`, marked `BUILT_UNTESTED`. It does not launch GPU
++kernels. The admitted candidate geometry is one sequence, eight queries, 24 Q
++heads, four KV heads, width 256, 16-token blocks and 32 splits, with BF16 or FP8
++KV. The caller owns valid block mappings, buffer sizes and stream ordering.
++
++The preserved native probe requires the pinned Radiance environment, the support
++package in [Radiance #10](https://github.com/magiccodingman/vllm-radiance/pull/10),
++its authenticated native specification and original build receipt. Run the
++source-bound builder before that probe; use its `--help` for the required paths.
++GPU execution requires explicit `--allow-gpu` and the shared qualification lease.
++The new `build.py` receipt cannot be substituted for the original qualification
++receipt: the current `r4d.h` differs, even though the attention translation unit
++and arithmetic helper headers match the measured build.
++
++The pinned downstream experiment checked 192 query positions across eight
++context boundaries and three cache storage layouts with zero mismatches,
++future-query interventions and graph replay. Its 60K FP8 layer measurement was
++0.997 ms for separate serial-query work versus 0.243 ms sharing KV reads. The
++complete compiled integration subsequently passed 10,000 aligned M1/M8 positions.
++These are completed downstream measurements, not results for this new header
++binding. Current-header execution and public-dispatch integration remain open.
++
++[Report, exact scope and compiled stage table](https://github.com/Terrydaktal/qwen-r9700-lab/releases/tag/d7-report-v1.0.0).
+diff --git a/experimental/m1_m8/SOURCE_PROVENANCE.json b/experimental/m1_m8/SOURCE_PROVENANCE.json
+new file mode 100644
+index 0000000..a42e35f
+--- /dev/null
++++ b/experimental/m1_m8/SOURCE_PROVENANCE.json
+@@ -0,0 +1,18 @@
++{
++  "source_project": "https://github.com/Terrydaktal/qwen-r9700-lab",
++  "scope": "Preserved downstream sources; historical qualification applies to their pinned dependencies, not automatically to current libr4d.",
++  "files": {
++    "build_stock_m1_attention_shared.py": {
++      "source": "experiments/radiance-public/build_stock_m1_attention_shared.py",
++      "sha256": "4d317f17e73095ce684dceb1c437fde021d22441c91ec2e228b731ca32203235"
++    },
++    "stock_m1_attention_shared.py": {
++      "source": "experiments/radiance-public/stock_m1_attention_shared.py",
++      "sha256": "135c4030571baddd084cb1b8b695599a330699a223d0d83ed247aa0e2e5ccbbf"
++    },
++    "probe_stock_m1_attention_shared.py": {
++      "source": "experiments/radiance-public/probe_stock_m1_attention_shared.py",
++      "sha256": "6d73e1ba0f8dffb89ae4ee9f6852d82b99120616fc63b185132a60d79d6b5101"
++    }
++  }
++}
+diff --git a/experimental/m1_m8/build.py b/experimental/m1_m8/build.py
+new file mode 100644
+index 0000000..789ddad
+--- /dev/null
++++ b/experimental/m1_m8/build.py
+@@ -0,0 +1,52 @@
++"""Compile the recorded experimental HIP sources without launching a GPU kernel."""
++
++import argparse
++import hashlib
++import json
++import subprocess
++from pathlib import Path
++
++
++def digest(path):
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--output", required=True, type=Path)
++    parser.add_argument("--hipcc", default="/opt/rocm/bin/hipcc")
++    args = parser.parse_args()
++    here = Path(__file__).resolve().parent
++    root = here.parents[1]
++    manifest = json.loads((here / "BUILD_INPUTS.json").read_text())
++    for name, expected in manifest["files"].items():
++        actual = digest(root / name)
++        if actual != expected:
++            raise ValueError(f"Build input changed: {name}: {actual} != {expected}")
++    output = args.output.resolve()
++    output.mkdir(mode=0o700, parents=True, exist_ok=False)
++    command = [
++        args.hipcc, "-O3", "-std=c++17", "--offload-arch=gfx1201", "-shared",
++        "-fPIC", "-ffp-contract=off", "-Wall", "-Wextra",
++        *manifest.get("extra_flags", []), "-I", str(root),
++        str(here / manifest["translation_unit"]), "-o", str(output / "candidate.so"),
++    ]
++    done = subprocess.run(command, capture_output=True, text=True, timeout=240)
++    (output / "compiler.log").write_text(done.stdout + done.stderr)
++    receipt = {
++        "status": "BUILT_UNTESTED" if done.returncode == 0 else "BUILD_FAILED",
++        "gpu_used": False,
++        "scope": "CPU compilation only; current-header native execution is not qualified",
++        "returncode": done.returncode,
++        "source_inputs": manifest,
++        "build_script_sha256": digest(Path(__file__)),
++        "command": command,
++        "binary_sha256": digest(output / "candidate.so") if done.returncode == 0 else None,
++    }
++    (output / "build.json").write_text(json.dumps(receipt, indent=2) + "\n")
++    print(json.dumps({key: receipt[key] for key in ("status", "gpu_used", "returncode")}))
++    return done.returncode
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/experimental/m1_m8/build_stock_m1_attention_shared.py b/experimental/m1_m8/build_stock_m1_attention_shared.py
+new file mode 100644
+index 0000000..ad167b5
+--- /dev/null
++++ b/experimental/m1_m8/build_stock_m1_attention_shared.py
+@@ -0,0 +1,153 @@
++"""Build query-isolated, shared-KV attention from authenticated libr4d source."""
++
++import argparse
++import hashlib
++import json
++import subprocess
++from pathlib import Path
++
++from qwen_r9700_lab.conformance_topk import require
++from qwen_r9700_lab.diagnostic_contract import seal, write_private
++
++SOURCES = {
++    "r4d_attn_decode_h256_gqa6.hip": (
++        "c548b0d9d6d68fabc93fef2245fa2f7a48665ec9ee2e771f82f3ec7587da958c"
++    ),
++    "r4d.h": "c71bb6946f912d85afeab7fdd1410a368a87aa0e6479ac9641d68905d810bb1c",
++    "r4d_common.h": "16db14fa42e7377c39641a3abea6d2ca524bb3a33e2a8afc55e9ccd3f5c0bacd",
++    "r4d_dt16.h": "b61525f1dbb6b272642e0e1410a3d753d1136ed87eb07cefca512843096c4c24",
++}
++
++
++def transform(source):
++    helper = """
++// Unchanged r4d_qcvt from the pinned attention prefill translation unit.
++template<class D, int FOLDQ, int F16>
++__device__ __forceinline__ uint32_t r4d_qcvt(uint32_t w, float s) {
++    if (!FOLDQ) return F16 ? D::from_bf16w(w) : w;
++    return D::pk(__builtin_bit_cast(float, w << 16) * s,
++                 __builtin_bit_cast(float, w & 0xffff0000u) * s);
++}
++"""
++    require(source.count("#define O_F16") == 1, "attention helper insertion anchor changed")
++    source = source.replace("#define O_F16", helper + "\n#define O_F16")
++    replacements = [
++        (
++            "const int sp = blockIdx.x, kvh = blockIdx.y, seq = blockIdx.z;\n"
++            "    const int ctx = a.seqused_k[seq];\n    if (ctx <= 0) return;",
++            """const int sp = blockIdx.x, kvh = blockIdx.y, seq = 0;
++    const int total_ctx = a.seqused_k[0];
++    if (total_ctx < a.q_len) return;
++    const int first_ctx = total_ctx - a.q_len + 1;
++    const int first_rows = min(a.q_len, ((first_ctx + 15) / 16) * 16 - first_ctx + 1);
++    const int group_start = blockIdx.z == 0 ? 0 : first_rows;
++    const int group_rows = blockIdx.z == 0 ? first_rows : a.q_len - first_rows;
++    if (!group_rows) return;
++    const int ctx = first_ctx + group_start + group_rows - 1;""",
++        ),
++        (
++            "const int row = warp * 16 + c;\n"
++            "    const int qi = row / GQA, hi = row - qi * GQA;\n"
++            "    const bool live = (qi < a.q_len);\n"
++            "    const int qrow = live ? qi : (a.q_len - 1);",
++            """const int pair = (c / GQA) % 2;
++    const int qi = warp * 2 + pair, hi = c % GQA;
++    const bool live = (c < 2 * GQA && qi < group_rows);
++    const int qrow = min(qi, group_rows - 1);
++    // Both halves of the fragment, all six heads, exactly one query.
++    auto query_any = [&](bool predicate) {
++        const unsigned mask = 0x003f003fu << (pair * GQA);
++        return (static_cast<unsigned>(__ballot(predicate)) & mask) != 0;
++    };""",
++        ),
++        (
++            "((size_t)(seq * a.q_len + qrow) * a.q_heads + qhead)",
++            "((size_t)(group_start + qrow) * a.q_heads + qhead)",
++        ),
++        ("const int klimit = ctx - a.q_len + qrow;", "const int klimit = ctx - group_rows + qrow;"),
++        ("wave_any(kbase + 7 > klimit)", "query_any(kbase + 7 > klimit)"),
++        ("wave_any(smax > m_ref + PGROW)", "query_any(smax > m_ref + PGROW)"),
++        ("const int tok = seq * a.q_len + qrow;", "const int tok = group_start + qrow;"),
++        (
++            "const int ctx = a.seqused_k[seq];",
++            "const int ctx = a.seqused_k[seq] - a.q_len + (tok % a.q_len) + 1;",
++        ),
++    ]
++    for before, after in replacements:
++        require(source.count(before) == 1, "attention source patch anchor changed")
++        source = source.replace(before, after)
++    source = source.replace("r4d_attn_decode_kernel", "qwen_stock_m1_shared_decode")
++    source = source.replace("r4d_attn_splitkv_combine_kernel", "qwen_stock_m1_shared_merge")
++    return source
++
++
++EXPORT = r"""
++template<int KVP> void launch_shared(const R4DArgs& a, hipStream_t stream) {
++  qwen_stock_m1_shared_decode<4,16,256,6,16,KVP,3430971>
++      <<<dim3(a.splits, 4, 2), dim3(128), 0, stream>>>(a, a.splits);
++  qwen_stock_m1_shared_merge<256,4,1>
++      <<<dim3(8 * 24), dim3(256), a.splits * sizeof(float), stream>>>(a, a.splits, 16);
++}
++extern "C" int qwen_stock_m1_attention_shared(const R4DArgs* a, int kvp, void* stream) {
++  if (!a || !a->q || !a->kv || !a->out || !a->scratch || !a->block_table ||
++      !a->seqused_k || a->num_seqs != 1 || a->q_len != 8 || a->q_heads != 24 ||
++      a->kv_heads != 4 || a->head_dim != 256 || a->block_size != 16 ||
++      a->splits != 32 || a->max_ctx < 1024 || kvp < 0 || kvp > 1) return -1;
++  if (kvp) launch_shared<1>(*a, reinterpret_cast<hipStream_t>(stream));
++  else launch_shared<0>(*a, reinterpret_cast<hipStream_t>(stream));
++  return int(hipGetLastError());
++}
++"""
++
++
++def build(source_dir, output):
++    output.mkdir(mode=0o700)
++    for name, expected in SOURCES.items():
++        raw = (source_dir / name).read_bytes()
++        require(hashlib.sha256(raw).hexdigest() == expected, "upstream source binding mismatch")
++        if name.endswith(".hip"):
++            raw = (transform(raw.decode()) + EXPORT).encode()
++        (output / name).write_bytes(raw)
++    source = output / "r4d_attn_decode_h256_gqa6.hip"
++    command = [
++        "/opt/rocm/bin/hipcc",
++        "-O3",
++        "-std=c++17",
++        "--offload-arch=gfx1201",
++        "-shared",
++        "-fPIC",
++        "-ffp-contract=off",
++        "-Wall",
++        "-Wextra",
++        "-cuid=qwen_shared_attn_" + hashlib.sha256(source.read_bytes()).hexdigest(),
++        str(source),
++        "-o",
++        str(output / "candidate.so"),
++    ]
++    done = subprocess.run(command, capture_output=True, text=True, timeout=240)
++    (output / "compiler.log").write_text(done.stdout + done.stderr)
++    report = seal(
++        {
++            "status": "BUILT_UNTESTED" if done.returncode == 0 else "BUILD_FAILED",
++            "gpu_used": False,
++            "command": command,
++            "returncode": done.returncode,
++            "upstream_sources": SOURCES,
++            "kernel_abi": "qwen-stock-m1-shared-attention-v1",
++            "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
++            "binary_sha256": hashlib.sha256((output / "candidate.so").read_bytes()).hexdigest()
++            if done.returncode == 0
++            else None,
++        }
++    )
++    write_private(output / "build.json", report)
++    print(json.dumps(report), flush=True)
++    return done.returncode
++
++
++if __name__ == "__main__":
++    p = argparse.ArgumentParser(description=__doc__)
++    p.add_argument("--source-dir", type=Path, required=True)
++    p.add_argument("--output", type=Path, required=True)
++    args = p.parse_args()
++    raise SystemExit(build(args.source_dir, args.output))
+diff --git a/experimental/m1_m8/probe_stock_m1_attention_shared.py b/experimental/m1_m8/probe_stock_m1_attention_shared.py
+new file mode 100644
+index 0000000..cbe7c4f
+--- /dev/null
++++ b/experimental/m1_m8/probe_stock_m1_attention_shared.py
+@@ -0,0 +1,227 @@
++"""Small exact-output and graph-timing sample for shared-KV M1 attention."""
++
++import argparse
++import hashlib
++import json
++import os
++import random
++import statistics
++from pathlib import Path
++
++from qwen_r9700_lab.conformance_topk import require
++from qwen_r9700_lab.diagnostic_contract import private_json, seal, write_private
++
++
++def qualify(args):
++    spec = private_json(args.spec)
++    os.environ.update(spec["environment"])
++    import radiance_r4d_attn as native
++    import torch
++    from stock_m1_attention_shared import SharedM1Attention
++
++    torch.set_num_threads(2)
++    torch.manual_seed(19023)
++    require(
++        hashlib.sha256(Path(native.__file__).read_bytes()).hexdigest()
++        == spec["binding"]["files"]["radiance_r4d_attn.py"],
++        "native attention binding changed",
++    )
++    candidate = SharedM1Attention(args.build)
++    prefixes = (0, 9, 15, 505, 60000, 60009, 60015, 60409)
++    blocks = (max(prefixes) + 8 + 15) // 16
++    table = torch.zeros((1, (253792 + 15) // 16), device="cuda", dtype=torch.int32)
++    table[0, :blocks] = torch.randperm(blocks, device="cuda", dtype=torch.int32)
++    repeated = table.expand(8, -1).contiguous()
++    guarded = torch.full((8 * 24 * 32 * 520 + 1024,), 0xA5, device="cuda", dtype=torch.uint8)
++    scratch = guarded[512:-512]
++    lengths = torch.empty((1,), device="cuda", dtype=torch.int32)
++    row_lengths = torch.empty((8,), device="cuda", dtype=torch.int32)
++    scales = [torch.full((4,), value, device="cuda", dtype=torch.float32) for value in (0.5, 1.5)]
++    repeated_scales = [s.repeat(8) for s in scales]
++    checks, timings = [], {}
++
++    def mismatches(a, b):
++        return int(torch.count_nonzero(a.view(torch.int16) != b.view(torch.int16)))
++
++    for dtype in (torch.float8_e4m3fn, torch.bfloat16, torch.uint8):
++        variant = int(dtype == torch.bfloat16)
++        if dtype == torch.uint8:
++            # vLLM stores FP8 as bytes; hybrid allocations can pad between pages.
++            kv = torch.empty((blocks, 5, 16, 512), device="cuda", dtype=dtype)[:, :4]
++            kv.copy_(torch.randn(kv.shape, device="cuda").to(torch.float8_e4m3fn).view(torch.uint8))
++        else:
++            kv = torch.randn((blocks, 4, 16, 512), device="cuda").to(dtype)
++        saved_kv = kv.clone()
++
++        def launch(
++            q,
++            table_,
++            lengths_,
++            out,
++            sequences,
++            width,
++            descales,
++            *,
++            function=native._DECODE[variant],
++            kv=kv,
++        ):
++            function(
++                q.data_ptr(),
++                kv.data_ptr(),
++                table_.data_ptr(),
++                lengths_.data_ptr(),
++                out.data_ptr(),
++                descales[0].data_ptr(),
++                descales[1].data_ptr(),
++                scratch.data_ptr(),
++                sequences,
++                width,
++                24,
++                4,
++                256,
++                16,
++                table_.shape[1],
++                kv.stride(0),
++                kv.stride(1),
++                256**-0.5,
++                32,
++                253792,
++                torch.cuda.current_stream().cuda_stream,
++            )
++            return out
++
++        for prefix in prefixes:
++            query = torch.randn((8, 24, 256), device="cuda").bfloat16()
++            query[1:] *= 16
++            lengths.fill_(prefix + 8)
++            row_lengths.copy_(
++                torch.arange(prefix + 1, prefix + 9, device="cuda", dtype=torch.int32)
++            )
++            oracle = torch.empty_like(query)
++            for row in range(8):
++                launch(
++                    query[row : row + 1],
++                    table,
++                    row_lengths[row : row + 1],
++                    oracle[row : row + 1],
++                    1,
++                    1,
++                    scales,
++                )
++            old = launch(
++                query, repeated, row_lengths, torch.empty_like(query), 8, 1, repeated_scales
++            )
++            out = candidate(query, kv, table, lengths, scratch, ks=scales[0], vs=scales[1])
++            record = {
++                "dtype": str(dtype),
++                "prefix": prefix,
++                "rows": 8,
++                "elements": out.numel(),
++                "baseline_mismatches": mismatches(old, oracle),
++                "candidate_mismatches": mismatches(out, oracle),
++            }
++            checks.append(record)
++            write_private(args.output / f"check-{dtype}-{prefix}.json", seal(record))
++            require(
++                record["baseline_mismatches"] == 0, "independent-query baseline differs from M1"
++            )
++            require(record["candidate_mismatches"] == 0, "shared-query attention differs from M1")
++            changed = query.clone()
++            changed[1:].zero_()
++            shifted = candidate(changed, kv, table, lengths, scratch, ks=scales[0], vs=scales[1])
++            require(mismatches(shifted[:1], out[:1]) == 0, "future query changed the first row")
++            require(
++                bool((guarded[:512] == 0xA5).all() and (guarded[-512:] == 0xA5).all()),
++                "scratch canary changed",
++            )
++
++            if prefix != 60000:
++                continue
++            functions = {
++                "independent_m1_queries": lambda query=query, launch=launch: launch(
++                    query, repeated, row_lengths, torch.empty_like(query), 8, 1, repeated_scales
++                ),
++                "shared_kv_queries": lambda query=query, kv=kv: candidate(
++                    query, kv, table, lengths, scratch, ks=scales[0], vs=scales[1]
++                ),
++            }
++            graphs, samples = {}, {name: [] for name in functions}
++            for name, function in functions.items():
++                stream = torch.cuda.Stream()
++                stream.wait_stream(torch.cuda.current_stream())
++                with torch.cuda.stream(stream):
++                    for _ in range(3):
++                        function()
++                torch.cuda.current_stream().wait_stream(stream)
++                graph = torch.cuda.CUDAGraph()
++                with torch.cuda.graph(graph):
++                    result = function()
++                graph.replay()
++                require(mismatches(result, oracle) == 0, "captured attention differs from M1")
++                graphs[name] = (graph, result)
++            rng = random.Random(3901)
++            for _ in range(30):
++                order = list(graphs)
++                rng.shuffle(order)
++                for name in order:
++                    begin = torch.cuda.Event(enable_timing=True)
++                    end = torch.cuda.Event(enable_timing=True)
++                    begin.record()
++                    graphs[name][0].replay()
++                    end.record()
++                    end.synchronize()
++                    samples[name].append(begin.elapsed_time(end))
++            timings[str(dtype)] = {
++                name: {"median_ms": statistics.median(values), "samples_ms": values}
++                for name, values in samples.items()
++            }
++            del graphs
++        require(torch.equal(kv.view(torch.uint8), saved_kv.view(torch.uint8)), "shared KV mutated")
++        del kv, saved_kv
++    broken = out.clone()
++    broken.view(torch.int16)[0, 0, 0] ^= 1
++    require(mismatches(broken, oracle) == 1, "negative control was not detected")
++    return {
++        "checks": checks,
++        "timings": timings,
++        "negative_control_detected": True,
++        "build": candidate.manifest["sha256"],
++        "graph_checks": True,
++        "reference": "eight native M1 queries with the pinned 32-split graph contract",
++    }
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    for name in ("spec", "build", "output"):
++        parser.add_argument("--" + name, type=Path, required=True)
++    parser.add_argument("--allow-gpu", action="store_true")
++    args = parser.parse_args()
++    require(
++        args.allow_gpu and os.environ.get("QWEN_CONFORMANCE_GPU_LOCK"), "GPU admission required"
++    )
++    from qwen_r9700_lab.conformance_gpu_lease import gpu_lease
++
++    os.umask(0o077)
++    args.output.mkdir(mode=0o700)
++    with gpu_lease(args.output / "gpu-lease"):
++        result = qualify(args)
++    report = seal(
++        {
++            "status": "SAMPLE_CHECKED",
++            **result,
++            "scope": "192 synthetic positions, 8 contexts, 3 KV layouts; not full-model proof",
++            "source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
++        }
++    )
++    write_private(args.output / "result.json", report)
++    print(
++        json.dumps(
++            {"status": report["status"], "timings": report["timings"], "sha256": report["sha256"]}
++        ),
++        flush=True,
++    )
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/experimental/m1_m8/shared_attention.hip b/experimental/m1_m8/shared_attention.hip
+new file mode 100644
+index 0000000..6b4800e
+--- /dev/null
++++ b/experimental/m1_m8/shared_attention.hip
+@@ -0,0 +1,502 @@
++// R4D decode. The prefill core (lazy reference-max softmax, f16 operands, folded query scale,
++// contiguous-k fragments, prefetch + scheduling barrier, dot2 row sum) on the split-KV MTP-verify
++// shape, plus two decode-only changes:
++//
++//   KLDS0  reads K straight from the paged cache, including when that cache is fp8. The
++//          widening moves from once-per-workgroup to once-per-warp; it costs VALU on a leg that is
++//          bandwidth-bound and buys back the whole sK allocation, which at TILE 16 is 8.3 KB of
++//          the 14.5 KB that sets resident-CTA count. This is the argmin at every depth.
++//   PF16   split-KV partials as f16 instead of f32. The partial buffer is written once and read
++//          back once, and at 16K context that round trip is ~14 MB against ~17 MB of KV -- i.e.
++//          nearly half the leg's DRAM traffic. Storing O/l rather than O bounds the value by
++//          max|v|, so f16 cannot overflow and its 11-bit mantissa costs ~5e-4 relative.
++//
++// The fp8-P leg and the layout permutation CONTIG replaced are gone from this file too; see
++// r4d_attn_prefill_h256_gqa6.hip for the option set and the reasoning behind each bit.
++#include "r4d.h"
++#include "r4d_common.h"
++#include "r4d_dt16.h"
++
++
++// Unchanged r4d_qcvt from the pinned attention prefill translation unit.
++template<class D, int FOLDQ, int F16>
++__device__ __forceinline__ uint32_t r4d_qcvt(uint32_t w, float s) {
++    if (!FOLDQ) return F16 ? D::from_bf16w(w) : w;
++    return D::pk(__builtin_bit_cast(float, w << 16) * s,
++                 __builtin_bit_cast(float, w & 0xffff0000u) * s);
++}
++
++#define O_F16    1
++#define O_MSKIP  2
++#define O_FOLDQ  8
++#define O_KLDS0 16
++#define O_PF16  32
++#define O_CONTIG 512
++#define O_PF2   1024
++#define O_PF4   2048
++#define O_PF8   3072
++#define O_SGB   4096
++#define O_DOT2 16384
++// The tile-staging set, shared with r4d_attn_prefill_h256_gqa6.hip -- see the comments there.
++//   BTS   block table entries for the tile in SGPRs, loaded a tile ahead. On this leg it also
++//         removes a dependent global load from INSIDE the m-tile loop: with KLDS0 the K address
++//         comes from bt[kk/BS] on every m-tile.
++//   GPREV tile ti+1's V fetched into registers before the m-tile loop.
++//   LDSB  an LDS-scoped barrier, so __syncthreads() stops invalidating the vector cache.
++#define O_BTS   262144
++#define O_GPREV 1048576
++#define O_LDSB  2097152
++
++__host__ __device__ __forceinline__ int r4d_attn_tiles(int ctx, int tile) { return (ctx + tile - 1) / tile; }
++__host__ __device__ __forceinline__ int r4d_attn_tps(int ctx, int tile, int splits) {
++    int t = r4d_attn_tiles(ctx, tile); return (t + splits - 1) / splits;
++}
++__host__ __device__ __forceinline__ int r4d_attn_used(int ctx, int tile, int splits) {
++    int t = r4d_attn_tiles(ctx, tile), tps = r4d_attn_tps(ctx, tile, splits); return (t + tps - 1) / tps;
++}
++
++template<int NWARPS, int TILE, int HEAD_DIM, int GQA, int BS, int KVP, int OPT>
++__global__ __launch_bounds__(NWARPS * 32)
++void qwen_stock_m1_shared_decode(const R4DArgs a, int splits)
++{
++    constexpr int F16   = (OPT & O_F16)   ? 1 : 0;
++    constexpr int MSKIP = (OPT & O_MSKIP) ? 1 : 0;
++    constexpr int FOLDQ = (OPT & O_FOLDQ) ? 1 : 0;
++    constexpr int KLDS  = (OPT & O_KLDS0) ? 0 : 1;
++    constexpr int PF16  = (OPT & O_PF16)  ? 1 : 0;
++    constexpr int CTG   = (OPT & O_CONTIG) ? 1 : 0;
++    constexpr int PF    = 1 << ((OPT >> 10) & 3);
++    constexpr int SGB   = (OPT & O_SGB) ? 1 : 0;
++    constexpr int DOT2  = ((OPT & O_DOT2) && (OPT & O_F16)) ? 1 : 0;
++    constexpr int BTS   = (OPT & O_BTS)  ? 1 : 0;
++    constexpr int LDSB  = (OPT & O_LDSB) ? 1 : 0;
++    typedef DT16<F16> D;
++    typedef typename D::frag frag16;
++
++    constexpr int NKS   = HEAD_DIM / 16;
++    constexpr int MT    = TILE / 16;
++    constexpr int KSTR  = HEAD_DIM + (CTG ? 8 : 4);
++    constexpr int VSTR  = TILE + (CTG ? 8 : 4);
++    constexpr int NTHR  = NWARPS * 32;
++    constexpr int NB    = TILE / BS;
++    constexpr int NTR   = (TILE / 8) * (HEAD_DIM / (KVP ? 32 : 64));
++    constexpr int VREGS = (NTR + NWARPS - 1) / NWARPS;
++    // A V prefetch costs VREGS x 4 VGPRs and this leg already carries a 128-VGPR accumulator and a
++    // 64-VGPR query. Measured: at two uint4 (fp8 KV, TILE 16) it is worth 6-8% at depth; at four
++    // (fp8 TILE 32, or bf16 TILE 16, whose V is twice the bytes) it spills and LOSES 10%. So the
++    // geometry decides, not the flag.
++    constexpr int GPREV = ((OPT & O_GPREV) && VREGS <= 2) ? 1 : 0;
++    constexpr float PSHIFT = D::SHIFT;
++    constexpr float PGROW  = D::GROW;
++
++    __shared__ uint16_t sK[KLDS ? TILE * KSTR : 1];
++    __shared__ uint16_t sV16[HEAD_DIM * VSTR];
++
++    const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++    const int c = lane & 15, h = lane >> 4;
++
++    const int sp = blockIdx.x, kvh = blockIdx.y, seq = 0;
++    const int total_ctx = a.seqused_k[0];
++    if (total_ctx < a.q_len) return;
++    const int first_ctx = total_ctx - a.q_len + 1;
++    const int first_rows = min(a.q_len, ((first_ctx + 15) / 16) * 16 - first_ctx + 1);
++    const int group_start = blockIdx.z == 0 ? 0 : first_rows;
++    const int group_rows = blockIdx.z == 0 ? first_rows : a.q_len - first_rows;
++    if (!group_rows) return;
++    const int ctx = first_ctx + group_start + group_rows - 1;
++
++    const int ntl  = r4d_attn_tiles(ctx, TILE);
++    const int tps  = r4d_attn_tps(ctx, TILE, splits);
++    const int t_lo = sp * tps;
++    if (t_lo >= ntl) return;
++    const int t_hi = min(t_lo + tps, ntl);
++
++    const int pair = (c / GQA) % 2;
++    const int qi = warp * 2 + pair, hi = c % GQA;
++    const bool live = (c < 2 * GQA && qi < group_rows);
++    const int qrow = min(qi, group_rows - 1);
++    // Both halves of the fragment, all six heads, exactly one query.
++    auto query_any = [&](bool predicate) {
++        const unsigned mask = 0x003f003fu << (pair * GQA);
++        return (static_cast<unsigned>(__ballot(predicate)) & mask) != 0;
++    };
++    const int qhead = kvh * GQA + hi;
++
++    const int* __restrict__ bt = a.block_table + (size_t)seq * a.max_blocks;
++    const float kdesc = a.k_descale ? a.k_descale[seq * a.kv_heads + kvh] : 1.0f;
++    const float mul   = a.scale * kdesc * 1.44269504089f;
++
++    frag16 qf[NKS];
++    {
++        const uint16_t* qp = (const uint16_t*)a.q
++                           + ((size_t)(group_start + qrow) * a.q_heads + qhead) * HEAD_DIM;
++        #pragma unroll
++        for (int t = 0; t < NKS; ++t) {
++            const uint2 l0 = *(const uint2*)(qp + 16 * t + (CTG ? 8 * h : 4 * h));
++            const uint2 h0 = *(const uint2*)(qp + 16 * t + (CTG ? 8 * h + 4 : 8 + 4 * h));
++            qf[t] = D::mk(make_uint2(r4d_qcvt<D, FOLDQ, F16>(l0.x, mul),
++                                     r4d_qcvt<D, FOLDQ, F16>(l0.y, mul)),
++                          make_uint2(r4d_qcvt<D, FOLDQ, F16>(h0.x, mul),
++                                     r4d_qcvt<D, FOLDQ, F16>(h0.y, mul)));
++        }
++    }
++
++    const int klimit = ctx - group_rows + qrow;
++    float m_ref = -3.0e38f;
++    float off   = PSHIFT + 3.0e38f;
++    float l_i   = 0.0f;
++    v8f acc[NKS];
++    #pragma unroll
++    for (int t = 0; t < NKS; ++t) acc[t] = (v8f){0,0,0,0,0,0,0,0};
++
++    const int vg = lane >> 3, vj = lane & 7;
++    uint4 vreg[VREGS];
++
++    auto fetchV = [&](int k0, const int* blks) {
++        #pragma unroll
++        for (int r = 0; r < VREGS; ++r) {
++            const int idx = warp + r * NWARPS;
++            if (NTR % NWARPS == 0 || idx < NTR) {
++                constexpr int DG = HEAD_DIM / (KVP ? 32 : 64);
++                const int kg = idx / DG, dg = idx - kg * DG;
++                const int kk = min(k0 + kg * 8 + vj, ctx - 1);
++                const int d0 = dg * (KVP ? 32 : 64) + vg * (KVP ? 8 : 16);
++                const int blk = BTS ? blks[(kk - k0) / BS] : bt[kk / BS];
++                const size_t o = (size_t)blk * a.kv_block_stride
++                               + (size_t)kvh * a.kv_head_stride
++                               + (size_t)(kk % BS) * (2 * HEAD_DIM) + HEAD_DIM + d0;
++                const void* p = KVP ? (const void*)((const uint16_t*)a.kv + o)
++                                    : (const void*)((const uint8_t*)a.kv + o);
++                vreg[r] = __builtin_bit_cast(uint4, load_tr_b128(p));
++            }
++        }
++    };
++
++    auto storeV = [&]() {
++        #pragma unroll
++        for (int r = 0; r < VREGS; ++r) {
++            const int idx = warp + r * NWARPS;
++            if (NTR % NWARPS == 0 || idx < NTR) {
++                constexpr int DG = HEAD_DIM / (KVP ? 32 : 64);
++                const int kg = idx / DG, dg = idx - kg * DG;
++                const int d0 = dg * (KVP ? 32 : 64) + vg * (KVP ? 8 : 16);
++                const uint4 v = vreg[r];
++                if (KVP) {
++                    uint16_t* dst = &sV16[(d0 + vj) * VSTR + kg * 8];
++                    *(uint2*)(dst)     = make_uint2(D::from_bf16w(v.x), D::from_bf16w(v.y));
++                    *(uint2*)(dst + 4) = make_uint2(D::from_bf16w(v.z), D::from_bf16w(v.w));
++                } else {
++                    const uint32_t lo0 = byte_gather(v.x, v.y, 0), lo1 = byte_gather(v.z, v.w, 0);
++                    const uint32_t hi0 = byte_gather(v.x, v.y, 1), hi1 = byte_gather(v.z, v.w, 1);
++                    uint32_t wl[4], wh[4];
++                    fp8x8_to_16x4w<D>(make_uint2(lo0, lo1), wl);
++                    fp8x8_to_16x4w<D>(make_uint2(hi0, hi1), wh);
++                    uint16_t* a0 = &sV16[(d0 + 2 * vj)     * VSTR + kg * 8];
++                    uint16_t* a1 = &sV16[(d0 + 2 * vj + 1) * VSTR + kg * 8];
++                    *(uint2*)(a0)     = make_uint2(wl[0], wl[1]);
++                    *(uint2*)(a0 + 4) = make_uint2(wl[2], wl[3]);
++                    *(uint2*)(a1)     = make_uint2(wh[0], wh[1]);
++                    *(uint2*)(a1 + 4) = make_uint2(wh[2], wh[3]);
++                }
++            }
++        }
++    };
++
++    int blk[NB];
++    if (BTS) {
++        #pragma unroll
++        for (int i = 0; i < NB; ++i) blk[i] = bt[t_lo * NB + i];
++    }
++    if (GPREV) fetchV(t_lo * TILE, blk);
++
++    for (int ti = t_lo; ti < t_hi; ++ti) {
++        const int k0 = ti * TILE;
++        int blkn[NB];
++        if (BTS && ti + 1 < t_hi) {
++            const int tb = (ti + 1) * NB;
++            #pragma unroll
++            for (int i = 0; i < NB; ++i) blkn[i] = bt[tb + i];
++        }
++        if (LDSB) lds_barrier(); else __syncthreads();
++
++        if (KLDS) {
++            #pragma unroll 1
++            for (int i = tid; i < TILE * (HEAD_DIM / 8); i += NTHR) {
++                const int key = i / (HEAD_DIM / 8), ch = i - key * (HEAD_DIM / 8);
++                const int kk = min(k0 + key, ctx - 1);
++                const int kb = BTS ? blk[(kk - k0) / BS] : bt[kk / BS];
++                const size_t o = (size_t)kb * a.kv_block_stride
++                               + (size_t)kvh * a.kv_head_stride + (size_t)(kk % BS) * (2 * HEAD_DIM);
++                uint16_t* kd = &sK[key * KSTR];
++                uint32_t w4[4];
++                if (KVP) {
++                    const uint4 r = *(const uint4*)((const uint16_t*)a.kv + o + ch * 8);
++                    w4[0] = D::from_bf16w(r.x); w4[1] = D::from_bf16w(r.y);
++                    w4[2] = D::from_bf16w(r.z); w4[3] = D::from_bf16w(r.w);
++                } else {
++                    fp8x8_to_16x4w<D>(*(const uint2*)((const uint8_t*)a.kv + o + ch * 8), w4);
++                }
++                *(uint2*)(kd + ch * 8)     = make_uint2(w4[0], w4[1]);
++                *(uint2*)(kd + ch * 8 + 4) = make_uint2(w4[2], w4[3]);
++            }
++        }
++        if (!GPREV) fetchV(k0, blk);
++        storeV();
++        if (LDSB) lds_barrier(); else __syncthreads();
++        if (GPREV && ti + 1 < t_hi) fetchV(k0 + TILE, blkn);
++
++        #pragma unroll 1
++        for (int mt = 0; mt < MT; ++mt) {
++            const uint8_t* grow = nullptr;
++            if (!KLDS) {
++                const int kk = min(k0 + mt * 16 + c, ctx - 1);
++                const int kb = BTS ? blk[(kk - k0) / BS] : bt[kk / BS];
++                grow = (const uint8_t*)a.kv + ((size_t)kb * a.kv_block_stride
++                     + (size_t)kvh * a.kv_head_stride + (size_t)(kk % BS) * (2 * HEAD_DIM))
++                     * (KVP ? 2 : 1);
++            }
++            v8f s = (v8f){0,0,0,0,0,0,0,0};
++            #pragma unroll
++            for (int g = 0; g < NKS; g += PF) {
++                frag16 kb[PF];
++                #pragma unroll
++                for (int j = 0; j < PF; ++j) {
++                    const int t = g + j;
++                    if (KLDS) {
++                        const uint16_t* kp = &sK[(mt * 16 + c) * KSTR + 16 * t];
++                        if (CTG) {
++                            const uint4 u = *(const uint4*)(kp + 8 * h);
++                            kb[j] = D::mk(make_uint2(u.x, u.y), make_uint2(u.z, u.w));
++                        } else {
++                            kb[j] = D::mk(*(const uint2*)(kp + 4 * h), *(const uint2*)(kp + 8 + 4 * h));
++                        }
++                    } else if (KVP) {
++                        const uint16_t* kp = (const uint16_t*)grow + 16 * t;
++                        const uint2 l0 = *(const uint2*)(kp + (CTG ? 8 * h : 4 * h));
++                        const uint2 h0 = *(const uint2*)(kp + (CTG ? 8 * h + 4 : 8 + 4 * h));
++                        kb[j] = D::mk(make_uint2(D::from_bf16w(l0.x), D::from_bf16w(l0.y)),
++                                      make_uint2(D::from_bf16w(h0.x), D::from_bf16w(h0.y)));
++                    } else {
++                        const uint8_t* kp = grow + 16 * t;
++                        uint32_t w4[4];
++                        // CONTIG makes this ONE 8-byte load where the split map needs two 4-byte.
++                        const uint2 raw = CTG ? *(const uint2*)(kp + 8 * h)
++                                              : make_uint2(*(const uint32_t*)(kp + 4 * h),
++                                                           *(const uint32_t*)(kp + 8 + 4 * h));
++                        fp8x8_to_16x4w<D>(raw, w4);
++                        kb[j] = D::mk(make_uint2(w4[0], w4[1]), make_uint2(w4[2], w4[3]));
++                    }
++                }
++                if (SGB) sched_barrier();
++                #pragma unroll
++                for (int j = 0; j < PF; ++j) s = D::wmma(kb[j], qf[g + j], s);
++            }
++            float sc[8];
++            #pragma unroll
++            for (int e = 0; e < 8; ++e) sc[e] = FOLDQ ? s[e] : s[e] * mul;
++
++            const int kbase = k0 + mt * 16 + 8 * h;
++            if (!MSKIP || query_any(kbase + 7 > klimit)) {
++                #pragma unroll
++                for (int e = 0; e < 8; ++e) sc[e] = (kbase + e <= klimit) ? sc[e] : -INFINITY;
++            }
++            float smax = sc[0];
++            #pragma unroll
++            for (int e = 1; e < 8; ++e) smax = fmaxf(smax, sc[e]);
++
++            if (query_any(smax > m_ref + PGROW)) {
++                const float rmax  = fmaxf(smax, swap16(smax));
++                const float mnew  = fmaxf(fmaxf(m_ref, rmax), -3.0e38f);
++                const float alpha = ex2(m_ref - mnew);
++                #pragma unroll
++                for (int dt = 0; dt < NKS; ++dt)
++                    #pragma unroll
++                    for (int e = 0; e < 8; ++e) acc[dt][e] *= alpha;
++                l_i *= alpha;
++                m_ref = mnew;
++                off   = PSHIFT - mnew;
++            }
++
++            float pf[8], lsum = 0.0f;
++            #pragma unroll
++            for (int e = 0; e < 8; ++e) {
++                const float p = ex2(sc[e] + off); pf[e] = p;
++                if (!DOT2) lsum += p;
++            }
++            if (!DOT2) l_i += lsum;
++
++            {
++                uint32_t pw[4];
++                #pragma unroll
++                for (int e = 0; e < 8; e += 2) pw[e >> 1] = D::pk(pf[e], pf[e + 1]);
++                if (DOT2) {
++                    const v2hf one = {(__fp16)1.0f, (__fp16)1.0f};
++                    #pragma unroll
++                    for (int e = 0; e < 4; ++e)
++                        l_i = __builtin_amdgcn_fdot2(__builtin_bit_cast(v2hf, pw[e]), one, l_i, false);
++                }
++                const uint2 lo  = make_uint2(pw[0], pw[1]);
++                const uint2 hi2 = make_uint2(pw[2], pw[3]);
++                frag16 p16;
++                if (CTG) {
++                    p16 = D::mk(lo, hi2);          // QK already left the keys lane-local
++                } else {
++                    const uint2 y = swap16_u2p((h == 0) ? hi2 : lo);
++                    p16 = (h == 0) ? D::mk(lo, y) : D::mk(y, hi2);
++                }
++                const uint16_t* vbase = &sV16[c * VSTR + mt * 16] + (CTG ? 8 * h : 0);
++                #pragma unroll
++                for (int g = 0; g < NKS; g += PF) {
++                    frag16 vb[PF];
++                    #pragma unroll
++                    for (int j = 0; j < PF; ++j) {
++                        const uint16_t* vp = vbase + (g + j) * 16 * VSTR;
++                        if (CTG) {
++                            const uint4 u = *(const uint4*)vp;
++                            vb[j] = D::mk(make_uint2(u.x, u.y), make_uint2(u.z, u.w));
++                        } else {
++                            vb[j] = D::mk(*(const uint2*)(vp + 4 * h),
++                                          *(const uint2*)(vp + 8 + 4 * h));
++                        }
++                    }
++                    if (SGB) sched_barrier();
++                    #pragma unroll
++                    for (int j = 0; j < PF; ++j) acc[g + j] = D::wmma(vb[j], p16, acc[g + j]);
++                }
++            }
++        }
++        if (BTS) {
++            #pragma unroll
++            for (int i = 0; i < NB; ++i) blk[i] = blkn[i];
++        }
++    }
++
++    if (!live) return;
++    const float lrow = l_i + swap16(l_i);
++    const int tok = group_start + qrow;
++    const size_t idx = (size_t)(tok * a.q_heads + qhead) * splits + sp;
++    const size_t nrow = (size_t)a.num_seqs * a.q_len * a.q_heads * splits;
++    if (PF16) {
++        // O/l in f16: bounded by max|v|, so no overflow, and the merge weight becomes w*l.
++        uint16_t* so = (uint16_t*)a.scratch;
++        float* sm = (float*)(so + nrow * HEAD_DIM);
++        float* sl = sm + nrow;
++        uint16_t* op = so + idx * HEAD_DIM;
++        const float inv = (lrow > 0.0f) ? (1.0f / lrow) : 0.0f;
++        #pragma unroll
++        for (int dt = 0; dt < NKS; ++dt) {
++            uint32_t tw[4];
++            #pragma unroll
++            for (int e = 0; e < 8; e += 2) tw[e >> 1] = DT16<1>::pk(acc[dt][e] * inv,
++                                                                    acc[dt][e + 1] * inv);
++            *(uint4*)(op + dt * 16 + 8 * h) = make_uint4(tw[0], tw[1], tw[2], tw[3]);
++        }
++        if (h == 0) { sm[idx] = m_ref; sl[idx] = lrow; }
++    } else {
++        float* so = (float*)a.scratch;
++        float* sm = so + nrow * HEAD_DIM;
++        float* sl = sm + nrow;
++        float* op = so + idx * HEAD_DIM;
++        #pragma unroll
++        for (int dt = 0; dt < NKS; ++dt) *(v8f*)(op + dt * 16 + 8 * h) = acc[dt];
++        if (h == 0) { sm[idx] = m_ref; sl[idx] = lrow; }
++    }
++}
++
++// Merge. PF16=1 reads normalised f16 partials and folds l into the weight; PF16=0 is the plain
++// path (unnormalised f32 partials, l summed separately). Both walk the segments in FIXED INDEX
++// ORDER so a request's rounding never depends on CTA scheduling.
++template<int HEAD_DIM, int CHAINS, int PF16>
++__global__ __launch_bounds__(HEAD_DIM)
++void qwen_stock_m1_shared_merge(const R4DArgs a, int splits, int tile)
++{
++    extern __shared__ float sw[];
++    __shared__ float red[HEAD_DIM];
++    const int job = blockIdx.x, d = threadIdx.x;
++    const int tok = job / a.q_heads, seq = tok / a.q_len;
++    const int ctx = a.seqused_k[seq] - a.q_len + (tok % a.q_len) + 1;
++    // A padded batch slot has no context at all. Its output is discarded by the caller, but the
++    // segment count below would divide by zero, so leave zeros and stop. `ctx` is block-uniform,
++    // so every thread takes this branch together and the barriers further down stay matched.
++    if (ctx <= 0) { ((uint16_t*)a.out)[(size_t)job * HEAD_DIM + d] = 0; return; }
++    const int u = r4d_attn_used(ctx, tile, splits);
++    const size_t nrow = (size_t)a.num_seqs * a.q_len * a.q_heads * splits;
++    const size_t base = (size_t)job * splits;
++
++    const float* sm; const float* sl;
++    if (PF16) { const uint16_t* so = (const uint16_t*)a.scratch;
++                sm = (const float*)(so + nrow * HEAD_DIM); sl = sm + nrow; }
++    else      { const float* so = (const float*)a.scratch;
++                sm = so + nrow * HEAD_DIM; sl = sm + nrow; }
++
++    float gmax = -INFINITY;
++    for (int s = d; s < u; s += HEAD_DIM) gmax = fmaxf(gmax, sm[base + s]);
++    red[d] = gmax; __syncthreads();
++    for (int off = HEAD_DIM / 2; off; off >>= 1) {
++        if (d < off) red[d] = fmaxf(red[d], red[d + off]);
++        __syncthreads();
++    }
++    gmax = red[0]; __syncthreads();
++
++    float tot = 0.0f;
++    for (int s = d; s < u; s += HEAD_DIM) {
++        const float mm = sm[base + s];
++        float w = (mm <= -3.0e38f) ? 0.0f : ex2(mm - gmax);
++        if (PF16) { w *= sl[base + s]; sw[s] = w; tot += w; }
++        else      { sw[s] = w;         tot += w * sl[base + s]; }
++    }
++    red[d] = tot; __syncthreads();
++    for (int off = HEAD_DIM / 2; off; off >>= 1) {
++        if (d < off) red[d] += red[d + off];
++        __syncthreads();
++    }
++    tot = red[0]; __syncthreads();
++
++    float ch[CHAINS];
++    #pragma unroll
++    for (int i = 0; i < CHAINS; ++i) ch[i] = 0.0f;
++    int s = 0;
++    if (PF16) {
++        const uint16_t* op = (const uint16_t*)a.scratch + base * HEAD_DIM + d;
++        for (; s + CHAINS <= u; s += CHAINS) {
++            #pragma unroll
++            for (int i = 0; i < CHAINS; ++i)
++                ch[i] = fmaf(sw[s + i], (float)__builtin_bit_cast(
++                    __fp16, op[(size_t)(s + i) * HEAD_DIM]), ch[i]);
++        }
++        for (; s < u; ++s)
++            ch[0] = fmaf(sw[s], (float)__builtin_bit_cast(__fp16, op[(size_t)s * HEAD_DIM]), ch[0]);
++    } else {
++        const float* op = (const float*)a.scratch + base * HEAD_DIM + d;
++        for (; s + CHAINS <= u; s += CHAINS) {
++            #pragma unroll
++            for (int i = 0; i < CHAINS; ++i)
++                ch[i] = fmaf(sw[s + i], op[(size_t)(s + i) * HEAD_DIM], ch[i]);
++        }
++        for (; s < u; ++s) ch[0] = fmaf(sw[s], op[(size_t)s * HEAD_DIM], ch[0]);
++    }
++    float av = 0.0f;
++    #pragma unroll
++    for (int i = 0; i < CHAINS; ++i) av += ch[i];
++
++    const int kvh = (job % a.q_heads) / (a.q_heads / a.kv_heads);
++    const float vd = a.v_descale ? a.v_descale[seq * a.kv_heads + kvh] : 1.0f;
++    ((uint16_t*)a.out)[(size_t)job * HEAD_DIM + d] =
++        f32_to_bf16(tot > 0.0f ? av * vd / tot : 0.0f);
++}
++
++template<int KVP> void launch_shared(const R4DArgs& a, hipStream_t stream) {
++  qwen_stock_m1_shared_decode<4,16,256,6,16,KVP,3430971>
++      <<<dim3(a.splits, 4, 2), dim3(128), 0, stream>>>(a, a.splits);
++  qwen_stock_m1_shared_merge<256,4,1>
++      <<<dim3(8 * 24), dim3(256), a.splits * sizeof(float), stream>>>(a, a.splits, 16);
++}
++extern "C" int qwen_stock_m1_attention_shared(const R4DArgs* a, int kvp, void* stream) {
++  if (!a || !a->q || !a->kv || !a->out || !a->scratch || !a->block_table ||
++      !a->seqused_k || a->num_seqs != 1 || a->q_len != 8 || a->q_heads != 24 ||
++      a->kv_heads != 4 || a->head_dim != 256 || a->block_size != 16 ||
++      a->splits != 32 || a->max_ctx < 1024 || kvp < 0 || kvp > 1) return -1;
++  if (kvp) launch_shared<1>(*a, reinterpret_cast<hipStream_t>(stream));
++  else launch_shared<0>(*a, reinterpret_cast<hipStream_t>(stream));
++  return int(hipGetLastError());
++}
+diff --git a/experimental/m1_m8/stock_m1_attention_shared.py b/experimental/m1_m8/stock_m1_attention_shared.py
+new file mode 100644
+index 0000000..3b47641
+--- /dev/null
++++ b/experimental/m1_m8/stock_m1_attention_shared.py
+@@ -0,0 +1,137 @@
++"""Isolated shared-KV candidate with per-query M1 softmax decisions."""
++
++import ctypes as c
++import hashlib
++from pathlib import Path
++
++from qwen_r9700_lab.conformance_topk import require
++from qwen_r9700_lab.diagnostic_contract import authenticate, private_json
++
++
++class R4DArgs(c.Structure):
++    _fields_ = (
++        [
++            (n, c.c_void_p)
++            for n in ["q", "kv", "table", "lengths", "out", "ks", "vs", "qs", "scratch"]
++        ]
++        + [
++            (n, c.c_int)
++            for n in ["sequences", "width", "heads", "kv_heads", "dim", "block", "max_blocks"]
++        ]
++        + [
++            ("block_stride", c.c_long),
++            ("head_stride", c.c_long),
++            ("scale", c.c_float),
++            ("splits", c.c_int),
++            ("max_ctx", c.c_int),
++        ]
++    )
++
++
++class SharedM1Attention:
++    def __init__(self, build):
++        build = Path(build)
++        self.manifest = private_json(build / "build.json")
++        authenticate(self.manifest)
++        binary = build / "candidate.so"
++        require(
++            self.manifest["status"] == "BUILT_UNTESTED"
++            and self.manifest.get("kernel_abi") == "qwen-stock-m1-shared-attention-v1"
++            and hashlib.sha256(binary.read_bytes()).hexdigest() == self.manifest["binary_sha256"],
++            "shared attention binary binding mismatch",
++        )
++        require(c.sizeof(R4DArgs) == 136, "R4D host ABI size changed")
++        self.library = c.CDLL(str(binary))
++        self.launch = self.library.qwen_stock_m1_attention_shared
++        self.launch.argtypes = [c.POINTER(R4DArgs), c.c_int, c.c_void_p]
++        self.launch.restype = c.c_int
++
++    def __call__(
++        self, query, kv, table, lengths, scratch, *, out=None, ks=None, vs=None, max_ctx=253792
++    ):
++        import torch
++
++        tensors = [query, kv, table, lengths, scratch]
++        valid = (
++            query.shape == (8, 24, 256)
++            and query.dtype == torch.bfloat16
++            and query.device.type == "cuda"
++            and query.is_contiguous()
++            and kv.shape[1:] == (4, 16, 512)
++            and kv.dtype in (torch.float8_e4m3fn, torch.uint8, torch.bfloat16)
++            and kv.stride(3) == 1
++            and kv.stride(2) == 512
++            and kv.stride(1) >= 16 * 512
++            and kv.stride(0) >= 4 * kv.stride(1)
++            and table.ndim == 2
++            and table.shape[0] == 1
++            and table.dtype == lengths.dtype == torch.int32
++            and lengths.shape == (1,)
++            and scratch.dtype == torch.uint8
++            and scratch.is_contiguous()
++            and scratch.numel() >= 8 * 24 * 32 * 520
++            and max_ctx >= 1024
++            and all(t.device == query.device for t in tensors)
++        )
++        if not valid:
++            require(
++                False,
++                "attention input contract changed: "
++                + repr([(tuple(t.shape), str(t.dtype), t.stride()) for t in tensors]),
++            )
++        for scales in (ks, vs):
++            require(
++                scales is None
++                or (
++                    scales.shape == (4,)
++                    and scales.dtype == torch.float32
++                    and scales.device == query.device
++                    and scales.is_contiguous()
++                ),
++                "attention scale contract changed",
++            )
++        if out is None:
++            out = torch.empty_like(query)
++        require(
++            out.shape == query.shape
++            and out.dtype == query.dtype
++            and out.device == query.device
++            and out.is_contiguous(),
++            "attention output contract changed",
++        )
++        require(
++            out.untyped_storage().data_ptr()
++            not in [t.untyped_storage().data_ptr() for t in tensors],
++            "attention output aliases an input",
++        )
++        args = R4DArgs(
++            query.data_ptr(),
++            kv.data_ptr(),
++            table.data_ptr(),
++            lengths.data_ptr(),
++            out.data_ptr(),
++            0 if ks is None else ks.data_ptr(),
++            0 if vs is None else vs.data_ptr(),
++            0,
++            scratch.data_ptr(),
++            1,
++            8,
++            24,
++            4,
++            256,
++            16,
++            table.shape[1],
++            kv.stride(0),
++            kv.stride(1),
++            256**-0.5,
++            32,
++            max_ctx,
++        )
++        with torch.cuda.device(query.device):
++            status = self.launch(
++                c.byref(args),
++                int(kv.dtype == torch.bfloat16),
++                torch.cuda.current_stream().cuda_stream,
++            )
++        require(status == 0, f"shared attention launch failed: {status}")
++        return out
+-- 
+2.55.0
+
