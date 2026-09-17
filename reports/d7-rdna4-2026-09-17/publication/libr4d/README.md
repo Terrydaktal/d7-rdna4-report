@@ -29,7 +29,31 @@ a fork are available, the existing branches can be pushed and submitted without
 recreating the work. The source in each patch can also be reviewed directly from
 this published bundle.
 
-The patch mailboxes retain their original bytes and commit identities. Their
-embedded historical report links point at the original private repository;
-use the [public report](../../REPORT.md) and the updated descriptions beside
-the patches when reviewing or preparing a submission.
+Each patch links directly to the [public report](../../REPORT.md). The manifest
+records the current prepared commit and patch identities.
+
+## Publish the existing branches
+
+Create a Codeberg fork of `StillDeadcode/libr4d`. Replace `YOUR_ACCOUNT` below
+with your Codeberg username, then run these commands on the development host:
+
+```sh
+git -C /home/lewis/tasks/qwen-pr-libr4d-20260917 push \
+  https://codeberg.org/YOUR_ACCOUNT/libr4d.git fix/query-isolated-m8-attention
+git -C /home/lewis/tasks/qwen-pr-libr4d-prefill-20260917 push \
+  https://codeberg.org/YOUR_ACCOUNT/libr4d.git fix/causal-gdn-prefill
+git -C /home/lewis/tasks/qwen-pr-libr4d-gdn-20260917 push \
+  https://codeberg.org/YOUR_ACCOUNT/libr4d.git fix/serial-contract-gdn
+```
+
+Open one draft pull request per branch against `StillDeadcode/libr4d:main`.
+Use the title and body from the corresponding file:
+
+- [Attention title and body](attention-pr.md), with [attention.patch](attention.patch).
+- [Causal-prefill title and body](causal-prefill-pr.md), with [causal-prefill.patch](causal-prefill.patch).
+- [Serial-GDN title and body](serial-gdn-contract-pr.md), with [serial-gdn-contract.patch](serial-gdn-contract.patch).
+
+The descriptions distinguish the tested pinned Radiance integration from these
+experimental upstream ports. Fix 2's eager/compiled rounding changes belong to
+the Radiance integration and the already-merged Triton repair; they do not add
+another libr4d patch.

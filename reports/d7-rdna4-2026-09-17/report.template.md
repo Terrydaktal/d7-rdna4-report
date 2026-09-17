@@ -1,6 +1,6 @@
-# Restoring M1/M8 Numerical Agreement in RDNA4 Speculative Decoding
+# Restoring M1/M8 and Eager/Compiled Agreement on RDNA4
 
-**Terrydaktal · 17 September 2026 · Technical report, version 4**
+**Terrydaktal · 17 September 2026 · Technical report, version 5**
 
 ## Abstract
 
@@ -9,7 +9,7 @@ same saved token history was processed one position at a time (M1) or eight
 positions at a time under D7 speculative verification (M8). The investigation
 localized numerical differences in GDN prefill and decode, convolution, gated
 normalization, attention, residual normalization and the BF16 vocabulary head.
-The repaired, compiled implementations now agree on top-1/10/20 membership,
+The Fix 1 compiled implementations agree on top-1/10/20 membership,
 ordering, retained scores, inclusive boundary ties and full-vocabulary logit
 hashes at 10,000 decode positions and 23 initial-prefill predictions. Four
 subsequent performance changes reduced a repaired verification round from
@@ -22,11 +22,16 @@ identical captured inputs and outputs at all 465 matched activation boundaries.
 This newer eager/compiled M8 result uses a separate 320-position replay; the
 10K comparison has not been repeated under the new rounding settings.
 
-This report documents an empirical result on a pinned configuration. It does
-not establish arbitrary-input equivalence, equality to an independently
-specified mathematical model, or improved task accuracy. Historical mode
-differences, their diagnosis and the remaining coverage limits are distinguished
-below.
+This is an empirical result on one pinned configuration; it does not establish
+arbitrary-input equivalence or improved task accuracy.
+
+The work consists of **two major fixes**:
+
+| Revision | What changed | Comparison it repairs |
+| --- | --- | --- |
+| Original | Pinned backend before these repairs | Baseline |
+| Fix 1 | Align M1/M8 arithmetic and state transitions, then recover performance | Compiled M8 versus compiled M1 |
+| Final: Fix 1 + Fix 2 | Preserve BF16 intermediate rounding in compiled execution and use nearest-even RoPE products in eager execution | Compiled M8 versus eager M8 |
 
 ## 1. Configuration and reference
 
@@ -68,7 +73,7 @@ consistency; it is not a percentage of questions answered correctly.
 
 ## 3. Top-1/10/20 and ordering results
 
-### Final compiled, optimized repair: full 10K corpus
+### Fix 1, compiled and optimized: full 10K corpus
 
 | Prediction | Same token set | Same ordering | Mean shared tokens |
 | --- | ---: | ---: | ---: |
@@ -82,30 +87,18 @@ predictions**. Both workers exited successfully. The completion audit checked
 all per-continuation receipts, fixture identities, widths, aligned positions,
 runtime receipts and the recomputed aggregate.
 
-### Compiled before/after control: 320 positions
+### Fresh four-way comparison: 320 positions
 
-This is the directly comparable compiled control, separate from the larger
-historical eager run. Each implementation is compared with its corresponding
-M1 reference.
+Seven fresh native runs used the same saved 60,000-token Pi prefix and 320
+aligned decode positions. Each M1/M8 pair uses its own revision's M1. Compiled
+arms ran with Inductor and piecewise GPU graphs; eager arms explicitly disabled
+compilation and graphs.
 
-| Prediction | Original M8: same set | Original M8: same order | Fixed optimized M8: same set | Fixed optimized M8: same order |
-| --- | ---: | ---: | ---: | ---: |
-| Top 1 | 318/320 (99.375%) | 318/320 (99.375%) | 320/320 (100%) | 320/320 (100%) |
-| Top 10 | 161/320 (50.3125%) | 17/320 (5.3125%) | 320/320 (100%) | 320/320 (100%) |
-| Top 20 | 76/320 (23.75%) | 0/320 (0%) | 320/320 (100%) | 320/320 (100%) |
+{{FOUR_COMPARISON_TABLE}}
 
-Full-vocabulary hashes match at 0/320 original positions and 320/320 repaired
-positions. The original initial-prefill vectors also differ. Original compiled
-M1 versus repaired compiled M1 agrees on top-1 at 319/320 positions and differs
-in every full-vector hash; reference changes are material to this experiment.
-
-A [fresh repaired compiled M1/M8 replay](evidence/fresh-m1-m8-output-320.json)
-also matches every complete output vector and the final prefill vector. Its
-[per-stage activation comparison](compiled-m1-m8-boundaries.md) matches outputs
-at all 466 named boundaries; captured inputs match at 465, with the remaining
-input unobserved. Serial positions are aligned with each M8 group, and physical
-cache capacities are recorded separately in the
-[admission receipt](evidence/compiled-m1-m8-boundaries-320.json).
+These are **whole-model** results. The isolated stage comparisons in section 4
+use common correct inputs to prevent upstream errors contaminating the stage
+being measured. [Run identities and complete counts](evidence/final-study-four-comparisons.json).
 
 ### Historical unfixed eager baseline: same 10K corpus
 
@@ -116,7 +109,7 @@ cache capacities are recorded separately in the
 | Top 20 | 2,270/10,000 (22.70%) | 9/10,000 (0.09%) | 18.6781 / 20 |
 
 These historical results use eager execution. They must not be presented as an
-unfixed **compiled** 10K measurement. The final compiled run uses a fresh
+unfixed **compiled** 10K measurement. The Fix 1 compiled run uses a fresh
 compiled M1 reference, not this saved eager reference.
 
 ## 4. Compiled stage timings and isolated correctness measurements
@@ -125,72 +118,80 @@ Both timing profiles use the same 60,000-input-token Pi fixture and the
 optimized compiled configuration: **`enforce_eager=false`, Inductor, PIECEWISE
 GPU graphs, capture sizes `[1, 2, 4, 8]`**. The actual traces contain **65 target
 GPU graph launches in every captured round**, in both arms. Runtime receipts
-are recorded in [compiled-execution-audit.json](evidence/compiled-execution-audit.json).
+are recorded in [final-study-profile-audit.json](evidence/final-study-profile-audit.json).
 These are not eager timings. The full BF16 target head is used on both sides.
 
-The finer audit found incomplete expected target-kernel inventories in old
-round 8 and fixed round 7 (one-based): respectively two and three missing
-recorded events relative to the modal inventory. This does not establish that
-the backend skipped those computations. The table below uses the **six paired
-rounds with complete inventories on both sides**, rounds 1–6. Selection depends
-on event counts, not speed. Both original eight-round receipts and the
-[original aggregate table](historical-eight-round-stage-table.md) are retained;
-all recorded dispatches, including excluded rounds, remain in the evidence.
+The fresh profiles contain one incomplete target-kernel inventory in each
+arm: original round 8 and final round 7 (one-based). The stage table uses the
+**six paired complete rounds, 1–6**, selected by inventory completeness rather
+than timing. Every recorded dispatch, including excluded rounds, remains in
+the evidence. [Profile audit](evidence/final-study-profile-audit.json).
 
-Each time is the sum of recorded GPU dispatch durations divided by six. Layer
-stages sum all their layer instances in a round. The 256 projection dispatches
-per round have been mapped using the checked four-projection sequence in each
-of 64 layers and the intervening GDN, attention and SiLU markers. The roughly
-25 ms folded-projection total is **the joint MLP gate/up projection across all
-64 layers**, rather than an unexplained collection of unrelated stages.
+All times are milliseconds per verification round: summed GPU dispatch
+durations for all layer instances, divided by six.
+The 256 projection dispatches per round are assigned to their four operations
+in each of 64 layers. The approximately 25 ms gate/up figure is the joint MLP
+projection across all 64 layers; its individual layer contributions follow.
 
-The isolated columns compare **compiled M8 against compiled M1** on 320
-positions. Each stage receives common reference inputs and state; only that
-stage is substituted, then the reference remainder produces vocabulary logits.
-The columns report vocabulary top-20 set/order agreement, not the largest
-coordinates of an intermediate activation. “No correctness repair” describes
-the code change; unmeasured stages remain labeled as such.
+The four correctness columns report **vocabulary top-20 set/order agreement on
+320 positions**, with each layer instance given common correct inputs. Only
+one instance is substituted at a time before the native reference remainder
+produces logits. A position passes an aggregated stage only when every instance
+passes. Exact local outputs and state can reuse the already validated reference
+remainder; shared implementations across revisions are identified explicitly.
+These are not rankings of intermediate activation coordinates.
+The all-layer requirement makes these rates stricter than a single whole-model
+comparison.
 
-The [compiled capture](evidence/mode-compiled-capture-bridge.json) reproduces
-all 320 release output vectors and the final prefill vector. Every isolated
-reference remainder is checked against those saved outputs before counting a
-result. Graph replay is enabled in the isolated kernel comparisons.
+“Performance” marks overhead removed from the initial repaired implementation;
+it does not imply that a stage is faster than the original unrepaired M8.
+A Fix 1 label records alignment to the selected serial arithmetic. Some original
+compiled M1/M8 stages already agree with each other on this sample; their actual
+agreement counts remain shown rather than being labelled as failures.
 
-The [head](evidence/isolated-head-320.json) and
-[final normalization](evidence/isolated-final-norm-320.json) checks supply the
-completed table cells. In both, full reference logits match at **0/320 old and
-320/320 fixed** positions, despite the head retaining the same top-20 rankings.
-The final-norm cut includes its fused retained-residual addition: the original
-kernel omits an intermediate BF16 rounding of that sum. Its result does not
-stand in for other normalization layers. Input/weight immutability and an
-injected bit error are checked.
+[Per-layer comparison counts](isolated-stage-layer-comparisons.csv) retain the
+individual results behind the aggregate table, including top-1/10/20 and full
+logit-vector agreement.
+
+Original comparisons use the original M1 and M8 stage implementations; Fix 1
+comparisons use the repaired implementations. Every column uses the same
+final-correct captured inputs. Thus these isolated rates diagnose individual
+stages; they are not the whole-model rates from section 3.
+
+Compiled diagnostic replay disables graph replay to expose individual calls;
+its ordinary outputs must first match the graph-enabled release. **Diagnostic
+replay durations are excluded from this timing table.** The original and final
+columns below use fresh graph-enabled release profiles.
+
+<div class="wide-table">
 
 {{STAGE_TABLE}}
+
+</div>
+
+† Attention decode and split-KV merge have separate GPU timings but one native
+numerical interface, so their correctness cells report the joint comparison.
+GDN transport copies are included in the convolution/recurrence state checks;
+they do not have an independent vocabulary-prediction result. Drafter and
+bookkeeping work are outside the target-stage comparison.
 
 Target-body subtotal: **{{TARGET_TOTAL}}**. Total recorded GPU kernel duration:
 **{{ALL_KERNEL_TOTAL}}**. These are subtotals, not extra stages. Kernel durations
 can overlap and exclude host/queue gaps; they are not wall-clock round latency.
 
-### Timing changes that are not yet causally isolated
+### Interpreting the timing differences
 
-Activation quantization still uses the same named kernel and **256 calls per
-round** in each arm. Across the six complete rounds its sum is **2.437 ms old
-versus 0.814 ms fixed**. The traces establish the difference, not its cause.
-There was no quantizer replacement or removal. Execution context, layouts,
-cache behavior and measurement effects have not been separated by an isolated
-quantizer experiment, so the report does not claim a threefold quantizer fix.
+The FP8 quantizer is unchanged and runs 256 times per round in both versions.
+Its fresh totals are **0.806 ms original and 0.810 ms final**. The earlier large
+quantization timing difference does not reproduce in this comparison.
 
-Attention decode averages **4.112 ms old versus 5.262 ms fixed**, but the fixed
-per-round totals are **3.546, 7.054, 3.570, 6.916, 3.588 and 6.901 ms**. The
-repaired source forms one or two query groups according to the eight queries'
-16-token tile boundaries, preserving each query's M1 causal/softmax decisions.
-A second active group repeats cached-context work. This is a plausible
-mechanism for the two timing bands, not a measured attribution of every slow
-round; the original traces do not record the kernel's sequence-length argument.
-The split-KV merge is separate: **0.253 ms old versus 0.121 ms fixed**.
+Attention decode averages **4.224 ms original and 5.285 ms final**. Final
+rounds split into approximately 3.55 ms and 7.02 ms groups. The repaired kernel
+uses one or two groups of queries aligned to 16-token tiles to preserve each
+query's M1 causal and softmax decisions; a second group repeats context work.
+The split-KV merge is timed separately: **0.138 ms original and 0.120 ms final**.
 
-Unchanged projection timings also vary. A timing delta by itself does not
-identify a correctness repair, an optimization, or its causal benefit.
+An unchanged stage's timing delta alone does not establish a performance fix.
 
 ### Every layer, including the 64 contributions to the gate/up total
 
@@ -212,7 +213,7 @@ Calls are totals over the six retained rounds; times are per-round means.
 Compiler-fused operations remain indivisible. The tables do not invent times
 for separate constituents of a single GPU dispatch. Individual dispatch
 durations, layer IDs and round IDs are retained in the two
-`evidence/*-compiled-dispatches.json` exports; they contain no token IDs, raw
+`evidence/final-study-*-dispatches.json` exports; they contain no token IDs, raw
 activations, absolute timestamps or process identifiers.
 
 <details>
@@ -249,8 +250,8 @@ natural responses per run on the same 60,000-token Pi prefix. Both settings use
 the final four performance repairs, full BF16 target head and piecewise GPU
 graphs. The only changed compiler setting is
 `TORCHINDUCTOR_EMULATE_PRECISION_CASTS=0/1`.
-The stage profiles in §4 and the preceding engine controls predate this
-rounding alignment.
+The stage profiles in section 4 now include this rounding alignment. The
+following separate ABBA comparison isolates Fix 2 from Fix 1.
 
 {{ROUNDING_SPEED_TABLE}}
 
@@ -300,9 +301,14 @@ denominator. See [earlier-60k-output-speed.json](evidence/earlier-60k-output-spe
 6. **Full BF16 head:** interleave two arithmetic-preserving M4 groups in one
    HIP launch. This avoids the first repair's duplicated launch/concatenation
    overhead. The upstream skinny-GEMM implementation belongs in vLLM.
-7. **Compiled integration:** install dispatch before tracing/capture, use opaque
+7. **Fix 1 compiled integration:** install dispatch before tracing/capture, use opaque
    bindings where necessary, and validate startup-only fallbacks separately from
    real requests. Integration and conformance adapters belong in Radiance.
+
+8. **Fix 2, execution-mode rounding:** enable
+   `TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1` for the compiled target and preserve
+   nearest-even BF16 products in native eager MRoPE. These changes address a
+   separate eager/compiled discrepancy after Fix 1 had aligned M1 and M8.
 
 These are submission scopes, not a claim that the pinned adapters apply
 unchanged to current upstream main. The new ports require their own tests.
@@ -316,32 +322,11 @@ agreement on the controlled 320-position Pi replay. This is separate from the
 compiled M1/M8 10K result in section 3; the full 10K eager/compiled comparison
 has not been repeated with the new rounding settings.
 
-### Controlled M8 results before and after rounding alignment
-
-Each experiment uses the same 60,000-token Pi prefix and 320 saved continuation
-positions. Source, runtime, capacity and numerical settings are checked; the
-receipts explicitly admit the indicated intervention. Every table entry is a
-count out of **320**.
-
-| Eager versus compiled experiment | Top-1 | Top-10 set | Top-10 order | Top-20 set | Top-20 order | Full logit vectors exact |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [Baseline, before rounding alignment](evidence/current-compiled-eager-320.json) | 319 | 146 | 14 | 66 | 0 | 0 |
-| [Native SiLU in compiled only](evidence/silu-intervention-vs-eager.json) | 318 | 154 | 21 | 66 | 0 | 0 |
-| [Preserve compiled precision casts only](evidence/precision-casts-vs-eager.json) | 316 | 151 | 22 | 76 | 0 | 0 |
-| [Preserve compiled casts + nearest-even native RoPE in eager](evidence/rotary-common-rounding-320.json) | 320 | 320 | 320 | 320 | 320 | 320 |
-
-Only the final row also matches the complete final-prefill vector. Its retained
-scores and inclusive tie sets agree throughout. Both capture observers
-reproduce their uninstrumented controls. The
-[complete before/after boundary table](common-rounding-boundaries.md) records
-exact captured inputs and outputs at all **465 matched boundaries**, across
-320 decode and nine sampled prefill positions, under the
-[declared intervention admission](evidence/common-rounding-admission.json).
-
-These changes affect the diagnostic configuration, not the release used for
-the timing tables. Correcting native RoPE changes four top-1 predictions versus
-the original eager output ([eager-only comparison](evidence/rotary-whole-model-eager-change.json)).
-Agreement between modes is not evidence of improved task accuracy.
+The [complete boundary comparison](common-rounding-boundaries.md) also matches
+captured inputs and outputs at all 465 matched boundaries, across 320 decode
+and nine sampled prefill positions. This sampled activation check supplements
+the whole-model and isolated-stage results; it does not cover all arbitrary
+inputs or every persistent state transition.
 
 ### Intermediate BF16 casts
 
@@ -366,12 +351,10 @@ Attention sigmoid gating had the same cast-elision distinction: eager rounded
 the sigmoid to BF16 before multiplying; compiled retained it in FP32. A
 [common-input native pilot](evidence/rope-gate-native-pilot.json) reproduced
 each implementation's own output and found 0/8 equal output rows between modes.
-The receipt identifies and supersedes an earlier diagnostic argument-mapping
-error; the gate is compiled argument 1, not the attention-output argument 0.
 
 `TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1` preserves these intermediate casts.
 The experiment checks the loaded compiler boolean as well as the environment
-setting. Cast preservation alone did not restore equality, as the table shows;
+setting. Cast preservation alone did not restore equality, in the [cast-only control](evidence/precision-casts-vs-eager.json);
 it exposed the remaining RoPE difference after matching the first three layers.
 
 ### Native RoPE multiplication
@@ -430,26 +413,6 @@ merged August 14, 2026. That fix replaces the special lowering with an FP32
 multiply and explicit nearest-even conversion. The new evidence here is the
 defect's occurrence and causal isolation inside the captured Qwen RoPE path;
 the upstream repair is credited to its existing authors.
-
-### Historical cross-mode 10K results, before rounding alignment
-
-The earlier D7-repaired eager M1/M8 pair agreed internally on all 10,000
-positions, as did the final compiled pair. Comparing those eager and compiled
-runs gave the following results for both M1 and M8:
-
-| Prediction | Same set | Same order |
-| --- | ---: | ---: |
-| Top-1 | 9,811/10,000 (98.11%) | 9,811/10,000 (98.11%) |
-| Top-10 | 4,845/10,000 (48.45%) | 756/10,000 (7.56%) |
-| Top-20 | 2,227/10,000 (22.27%) | 4/10,000 (0.04%) |
-
-Every full-vector hash differed, including all 23 prefills; prefill top-1
-agreed at 21/23 positions. These runs predate the rounding alignment above.
-They also differ in repair integration and sequence capacity (`max_num_seqs=1`
-for eager versus `2` for compiled), so they cannot isolate compilation as the
-cause. The [recovered historical comparison](evidence/historical-eager-to-compiled-m8.json)
-preserves that scope. These numbers are historical measurements, not the result
-of the newly aligned configuration.
 
 ### Remaining coverage limits
 

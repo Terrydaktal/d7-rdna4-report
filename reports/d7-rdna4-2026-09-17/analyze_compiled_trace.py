@@ -169,6 +169,19 @@ def export(trace_path, profile_path, output):
 
     for round_index, (_key, events) in enumerate(targets):
         assert len({(event["args"]["device"], event["args"]["stream"]) for event in events}) == 1
+        if round_index not in complete_rounds:
+            # A missing projection makes positional layer attribution ambiguous.
+            # Retain every actual event, but do not invent its layer or use it
+            # in the timing comparison.
+            for event in events:
+                record(
+                    event,
+                    "target_body",
+                    round_index,
+                    None,
+                    "Unclassified target dispatch (incomplete profile)",
+                )
+            continue
         points = [
             (i, projection(event["name"]))
             for i, event in enumerate(events)

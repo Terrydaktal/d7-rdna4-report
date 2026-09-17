@@ -1,4 +1,4 @@
-From 6596517ef4ca813a0066f410623787bac2209afa Mon Sep 17 00:00:00 2001
+From dcfe72b51c53cdf41b148dfac7bc89e639cf7237 Mon Sep 17 00:00:00 2001
 From: Terrydaktal <9lewis9@gmail.com>
 Date: Thu, 17 Sep 2026 05:31:31 +0100
 Subject: [PATCH] Add causal GDN prefill reference and source-bound
@@ -9,6 +9,10 @@ Expose the raw-gate producer and token-ordered recurrence used to eliminate depe
 Include the native partition/state probe, original source-bound builder and an isolated current-header compilation path with its successful receipt. Document input/output contracts, execution order, source hashes and the distinction between this R4D-M1 reference and the later stock-FLA compiled repair. Production dispatch is not changed by this experimental submission.
 
 Validation: current-header HIP compilation passed without GPU execution and all copied source identities matched. The separately pinned reference passed 52 native comparisons, including future-gate interventions, nonzero state/history, strided gates and empty sequences. Current-header native integration is still unqualified.
+Link the experiment README directly to the public report and aggregate
+evidence so the prepared upstream submission is reviewable without private
+repository access. This documentation update changes no measured kernel.
+
 Signed-off-by: Terrydaktal <9lewis9@gmail.com>
 ---
  experimental/causal_gdn_prefill/.gitignore    |   9 +
@@ -117,7 +121,7 @@ index 0000000..8a81098
 +}
 diff --git a/experimental/causal_gdn_prefill/README.md b/experimental/causal_gdn_prefill/README.md
 new file mode 100644
-index 0000000..445e056
+index 0000000..bbefd86
 --- /dev/null
 +++ b/experimental/causal_gdn_prefill/README.md
 @@ -0,0 +1,65 @@
@@ -185,7 +189,7 @@ index 0000000..445e056
 +discrepancies. The later stock-contract repair is published separately in
 +[Radiance #11](https://github.com/magiccodingman/vllm-radiance/pull/11).
 +
-+[Investigation report](https://github.com/Terrydaktal/qwen-r9700-lab/releases/tag/d7-report-v1.0.0).
++[Investigation report](https://github.com/Terrydaktal/d7-rdna4-report/blob/main/reports/d7-rdna4-2026-09-17/REPORT.md).
 diff --git a/experimental/causal_gdn_prefill/SOURCE_PROVENANCE.json b/experimental/causal_gdn_prefill/SOURCE_PROVENANCE.json
 new file mode 100644
 index 0000000..9dbd6a2

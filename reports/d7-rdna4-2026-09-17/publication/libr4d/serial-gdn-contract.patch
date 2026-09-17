@@ -1,4 +1,4 @@
-From 5d03c0f1f59837bfd41cc5b9f7f6a248ca2ec37e Mon Sep 17 00:00:00 2001
+From 0c98323ebe27d8222a1d66fdebf1463366c5bf2e Mon Sep 17 00:00:00 2001
 From: Terrydaktal <9lewis9@gmail.com>
 Date: Thu, 17 Sep 2026 05:31:31 +0100
 Subject: [PATCH] Publish serial GDN arithmetic contract and speculative
@@ -9,6 +9,10 @@ Provide the pinned stock-FLA oracle and ordered Triton scan used to diagnose and
 Include convolution, prefill, recurrent and indexed adapters, per-row state selection and native differential replay. Explicitly distinguish processed verification rows from the newly emitted pending token and retain independent state for accepted prefixes. Add source provenance, the immutable reference contract and CPU ownership/admission regressions with negative controls.
 
 Validation: 78 CPU checks passed; one retained compiler-artifact check was explicitly skipped. Copied runtime sources match the qualified downstream identities. The complete compiled Radiance integration has separate 10K evidence; this bundle supplies a test oracle for an upstream HIP port and does not claim that production libr4d has already been converted or qualified.
+Link the experiment README directly to the public report and aggregate
+evidence so the prepared upstream submission is reviewable without private
+repository access. This documentation update changes no measured kernel.
+
 Signed-off-by: Terrydaktal <9lewis9@gmail.com>
 ---
  experimental/serial_gdn_contract/.gitignore   |   9 +
@@ -66,7 +70,7 @@ index 0000000..8e454e1
 +build/
 diff --git a/experimental/serial_gdn_contract/README.md b/experimental/serial_gdn_contract/README.md
 new file mode 100644
-index 0000000..7e21493
+index 0000000..1b516cc
 --- /dev/null
 +++ b/experimental/serial_gdn_contract/README.md
 @@ -0,0 +1,63 @@
@@ -132,7 +136,7 @@ index 0000000..7e21493
 +state/acceptance/graph checks, then perform complete model and speed qualification.
 +The reference is provided so that work has a precise test oracle.
 +
-+[Report and compiled stage breakdown](https://github.com/Terrydaktal/qwen-r9700-lab/releases/tag/d7-report-v1.0.0).
++[Report and compiled stage breakdown](https://github.com/Terrydaktal/d7-rdna4-report/blob/main/reports/d7-rdna4-2026-09-17/REPORT.md).
 diff --git a/experimental/serial_gdn_contract/SOURCE_PROVENANCE.json b/experimental/serial_gdn_contract/SOURCE_PROVENANCE.json
 new file mode 100644
 index 0000000..d7b9a66

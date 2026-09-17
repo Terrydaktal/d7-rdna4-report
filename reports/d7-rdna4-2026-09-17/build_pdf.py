@@ -14,6 +14,10 @@ CSS = """
 @page { size: A4; margin: 16mm 14mm;
   @bottom-right { content: counter(page); font-size: 8pt; color: #59616b; }
 }
+@page stage { size: A3 landscape; margin: 14mm; }
+.wide-table { page: stage; break-before: page; break-after: page; }
+.wide-table table { font-size: 7.3pt; line-height: 1.29; }
+.wide-table th, .wide-table td { padding: 3pt; }
 body { font-family: DejaVu Sans, sans-serif; font-size: 8.6pt;
        line-height: 1.36; color: #17212c; }
 h1 { font-size: 20pt; line-height: 1.15; color: #102c48; }
@@ -37,7 +41,7 @@ def main():
     content = MarkdownIt("commonmark").enable("table").render((ROOT / "REPORT.md").read_text())
     document = (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        "<title>Restoring M1/M8 Numerical Agreement in RDNA4 Speculative Decoding</title>"
+        "<title>Restoring M1/M8 and Eager/Compiled Agreement on RDNA4</title>"
         '<meta name="author" content="Terrydaktal">'
         f"<style>{CSS}</style></head><body>{content}</body></html>"
     )

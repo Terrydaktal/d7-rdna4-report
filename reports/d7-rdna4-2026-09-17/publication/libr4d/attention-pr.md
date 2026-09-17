@@ -19,4 +19,8 @@ interventions, guards and graph replay across three cache storage layouts. Its
 Radiance repair later matched top-1/10/20 sets, ordering and full-logit digests on
 10,000 positions. Those full-model results include other stage repairs.
 
-[Report, complete compiled stage timings and evidence](https://github.com/Terrydaktal/d7-rdna4-report/blob/main/reports/d7-rdna4-2026-09-17/REPORT.md).
+This patch covers the attention part of **Fix 1**. The report's fresh final
+timings additionally include **Fix 2**, which aligns eager/compiled rounding;
+that compiler/RoPE work is a separate integration change.
+
+[Report, four isolated comparisons, complete compiled stage timings and evidence](https://github.com/Terrydaktal/d7-rdna4-report/blob/main/reports/d7-rdna4-2026-09-17/REPORT.md).

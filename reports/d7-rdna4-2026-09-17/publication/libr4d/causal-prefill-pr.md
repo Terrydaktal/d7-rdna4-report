@@ -20,4 +20,8 @@ This supplies the reference, source-bound builders and native reproducer for
 review. It does not present operator evidence as a complete model proof or
 silently install an unqualified production default.
 
+The report distinguishes the later compiled M1/M8 repair (Fix 1) from
+eager/compiled rounding alignment (Fix 2). Its final decode timings do not
+replace the prefill operator measurements above.
+
 [Wider report and compiled stage table](https://github.com/Terrydaktal/d7-rdna4-report/blob/main/reports/d7-rdna4-2026-09-17/REPORT.md).

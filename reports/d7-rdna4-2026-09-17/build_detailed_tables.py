@@ -8,22 +8,19 @@ from collections import Counter, defaultdict
 
 STAGES = {
     "Embedding + first input normalization": (
-        "Normalization repair; embedding unchanged",
+        "Fix 1: normalization; embedding unchanged",
         (
             "Preserve the reference normalization rounding; the original "
             "embedding/norm fusion is indivisible."
         ),
     ),
     "Layer input residual/normalization": (
-        "Correctness + performance",
+        "Fix 1 + performance",
         "Preserve reduction and rounding; retain FP32 residual sums in registers.",
     ),
     "GDN input activation FP8 quantization": (
         "No correctness repair",
-        (
-            "Same quantization kernel and call count; the measured reduction has no"
-            " isolated causal attribution."
-        ),
+        ("Same quantization kernel and call count; the small timing delta is unassigned."),
     ),
     "GDN input projection": (
         "No correctness repair",
@@ -40,18 +37,18 @@ STAGES = {
         ),
     ),
     "GDN convolution": (
-        "Correctness + performance",
+        "Fix 1 + performance",
         (
             "Match serial product/accumulation order and rolling history; packed "
             "transport removes surrounding copies."
         ),
     ),
     "GDN recurrence and gates": (
-        "Correctness repair",
+        "Fix 1",
         "Match gate precision, reduction order, recurrent-state transition and output rounding.",
     ),
     "GDN output gated normalization": (
-        "Correctness + performance",
+        "Fix 1 + performance",
         (
             "Keep the serial row tile while processing independent rows "
             "concurrently; original fused constituents remain grouped."
@@ -59,10 +56,7 @@ STAGES = {
     ),
     "GDN output activation FP8 quantization": (
         "No correctness repair",
-        (
-            "Same quantization kernel and call count; the timing reduction is not "
-            "an established quantizer improvement."
-        ),
+        ("Same quantization kernel and call count; the small timing delta is unassigned."),
     ),
     "GDN output projection": (
         "No correctness repair",
@@ -77,10 +71,10 @@ STAGES = {
         "Unchanged QKV MXFP4 projection; no causal speedup claimed.",
     ),
     "Attention Q/K normalization, RoPE and layout": (
-        "Normalization repair; RoPE unchanged",
+        "Fix 1: normalization; Fix 2: RoPE rounding",
         (
-            "Keep serial normalization arithmetic. Fused original "
-            "normalization/RoPE constituents cannot be timed separately."
+            "Preserve serial normalization and BF16 RoPE product rounding. "
+            "Fused original constituents share one timing."
         ),
     ),
     "Attention KV write": (
@@ -88,7 +82,7 @@ STAGES = {
         "Same cache-write kernel and KV format; timing cause is not isolated.",
     ),
     "Attention decode": (
-        "Correctness + performance",
+        "Fix 1 + performance",
         (
             "Preserve each query's causal tile/softmax decisions. Share KV reads "
             "within one or two tile-aligned query groups; two groups repeat context"
@@ -96,15 +90,15 @@ STAGES = {
         ),
     ),
     "Attention split-KV merge": (
-        "Correctness repair",
+        "Fix 1",
         (
             "Use each query's serial split/merge arithmetic; the observed reduction"
             " has not been isolated from the decode change."
         ),
     ),
     "Attention output gating": (
-        "No correctness repair",
-        "Unchanged pointwise operation; measured variation has no isolated causal attribution.",
+        "Fix 2: intermediate rounding",
+        "Preserve the BF16 sigmoid result before multiplying the output gate.",
     ),
     "Attention output activation FP8 quantization": (
         "No correctness repair",
@@ -115,7 +109,7 @@ STAGES = {
         "Unchanged output MXFP4 projection; no causal speedup claimed.",
     ),
     "Post-attention/GDN residual/normalization": (
-        "Correctness + performance",
+        "Fix 1 + performance",
         "Preserve serial reduction/rounding and keep residual values in registers.",
     ),
     "MLP gate/up input FP8 quantization": (
@@ -131,8 +125,8 @@ STAGES = {
         ),
     ),
     "MLP SiLU and gating": (
-        "No correctness repair",
-        "Unchanged compiler-fused SiLU/gating; no causal timing improvement claimed.",
+        "Fix 2: intermediate rounding",
+        "Preserve the BF16 SiLU result before multiplication; retain one fused pointwise launch.",
     ),
     "MLP down input FP8 quantization": (
         "No correctness repair",
@@ -143,14 +137,14 @@ STAGES = {
         "Unchanged MXFP4 down projection; no causal speedup claimed.",
     ),
     "Final normalization/layout": (
-        "Correctness repair",
+        "Fix 1",
         (
             "Preserve final-normalization reduction and the BF16 rounding of its "
             "retained residual sum; isolated check includes that fused addition."
         ),
     ),
     "Full BF16 target head": (
-        "Correctness + performance",
+        "Fix 1 + performance",
         (
             "Interleave two arithmetic-preserving M4 groups in one HIP launch, "
             "removing duplicated launch and concatenation overhead."
@@ -186,39 +180,30 @@ def authenticated_read(path):
 
 
 def isolated_measurements(root):
-    path = root / "evidence" / "isolated-stage-320.json"
-    if not path.exists():
-        return {"stages": {}}
-    data = authenticated_read(path)
-    known = {
-        "Full BF16 target head": "isolated-head-320.json",
-        "Final normalization/layout": "isolated-final-norm-320.json",
-    }
-    assert set(data["stages"]) <= known.keys(), "new stages need receipt validation"
-    for name, values in data["stages"].items():
-        receipt = authenticated_read(root / "evidence" / known[name])
-        assert receipt["status"] == "SAMPLE_CHECKED" and receipt["negative_control_detected"]
-        assert data["receipts"][name] == receipt["sha256"]
-        assert set(values) == {"old", "fixed"}
-        for arm, result in values.items():
-            native = receipt["results"][arm]
-            for key in ("positions", "top1_exact", "top20_set_exact", "top20_order_exact"):
-                assert result[key] == native[key], (name, arm, key)
-            assert result["positions"] == 320
-        if name == "Final normalization/layout":
-            assert receipt["reference_remainder_checked"] == 320 and receipt["weights_unchanged"]
-            assert all(v["scope"] == receipt["scope"] for v in values.values())
-        else:
-            assert values == receipt["results"]
+    from combine_native_stage_evidence import combine
+
+    evidence = root / "evidence"
+    data = authenticated_read(evidence / "final-study-isolated-stage-matrix.json")
+    reconstructed = combine([evidence / name for name in data["receipts"]])
+    assert reconstructed == data, "isolated aggregate differs from native receipts"
     return data
 
 
 def build(root):
+    audit = authenticated_read(root / "evidence/final-study-profile-audit.json")
+    assert audit["status"] == "MEASURED"
     exports = {}
     for arm in ("old", "fixed"):
-        profile_path = root / "evidence" / f"{arm}-compiled-profile.json"
+        label = "original" if arm == "old" else "fixed"
+        audit_arm = "original" if arm == "old" else "final"
+        profile_path = root / "evidence" / f"final-study-{label}-profile.json"
         profile = json.loads(profile_path.read_text())
-        export = json.loads((root / "evidence" / f"{arm}-compiled-dispatches.json").read_text())
+        export_path = root / "evidence" / f"final-study-{label}-dispatches.json"
+        export = json.loads(export_path.read_text())
+        assert (
+            hashlib.sha256(export_path.read_bytes()).hexdigest()
+            == audit["arms"][audit_arm]["dispatch_file_sha256"]
+        )
         assert (
             export["profile_file_sha256"] == hashlib.sha256(profile_path.read_bytes()).hexdigest()
         )
@@ -227,7 +212,11 @@ def build(root):
         assert export["profiled_target_graph_launches_per_round"] == [65] * 8
         counts, durations = Counter(), defaultdict(float)
         for scope, index, layer, phase, kernel_id, us in export["dispatches"]:
-            assert phase in STAGES and index in range(8)
+            assert index in range(8)
+            assert phase in STAGES or (
+                phase == "Unclassified target dispatch (incomplete profile)"
+                and index not in export["complete_target_inventory_rounds"]
+            )
             assert layer is None or layer in range(64)
             assert math.isfinite(us) and us >= 0
             key = scope, export["kernels"][kernel_id]
@@ -242,7 +231,7 @@ def build(root):
     rounds = sorted(
         set.intersection(*(set(e["complete_target_inventory_rounds"]) for e in exports.values()))
     )
-    assert rounds == list(range(6)), "review a changed profile inventory before publishing"
+    assert rounds == audit["paired_profile_rounds"]
     divisor = 1000 * len(rounds)
     phases, layers, kernel_rows, selected = {}, {}, {}, {}
     for arm, export in exports.items():
@@ -261,9 +250,45 @@ def build(root):
             row[1] += us / divisor
         close(sum(phases[arm].values()), sum(r[5] for r in selected[arm]) / divisor)
     correctness = isolated_measurements(root)
+    with (root / "isolated-stage-layer-comparisons.csv").open("w", newline="") as handle:
+        columns = ["stage", "layer", "comparison", "positions", "full_logits_exact"] + [
+            f"top{k}_{kind}_exact" for k in (1, 10, 20) for kind in ("set", "order")
+        ]
+        writer = csv.DictWriter(handle, fieldnames=columns, lineterminator="\n")
+        writer.writeheader()
+        for stage, instances in sorted(correctness["per_instance"].items()):
+            for instance, comparisons in sorted(instances.items()):
+                for comparison, values in sorted(comparisons.items()):
+                    writer.writerow(
+                        {
+                            "stage": stage,
+                            "layer": instance,
+                            "comparison": {
+                                "old": "Old compiled M8 vs old compiled M1",
+                                "fixed": "Fix 1 compiled M8 vs Fix 1 compiled M1",
+                                "fix1_modes": "Fix 1 compiled M8 vs Fix 1 eager M8",
+                                "final_modes": "Final compiled M8 vs final eager M8",
+                            }[comparison],
+                            **values,
+                        }
+                    )
     rows = []
     for name, (repair, explanation) in STAGES.items():
-        measurements = correctness["stages"].get(name, {})
+        shared_stage = (
+            "Attention decode and split-KV merge"
+            if name in ("Attention decode", "Attention split-KV merge")
+            else name
+        )
+        measurements = correctness["stages"].get(shared_stage, {})
+        if name not in {
+            "Drafter",
+            "Other GPU bookkeeping",
+            "GDN layout/copies and buffer initialization",
+        }:
+            assert set(measurements) == {"old", "fixed", "fix1_modes", "final_modes"}, (
+                "incomplete isolated stage columns",
+                name,
+            )
         row = {
             "stage": name,
             "correctness_change": repair,
@@ -276,36 +301,46 @@ def build(root):
         rows.append(row)
     table = [
         (
-            "| Compiled stage | Correctness fix? | Old M8 ms | Fixed M8 ms | Change"
-            " ms | Old compiled M8 vs compiled M1<br>Isolated top-20 set/order | "
-            "Fixed compiled M8 vs compiled M1<br>Isolated top-20 set/order | Timing explanation |"
+            "| Compiled stage | Correctness fix? | Old compiled M8 | "
+            "Final fixed compiled M8 ms | Change ms | "
+            "Old compiled M8 vs old compiled M1<br>Top-20 set/order | "
+            "Fix 1 compiled M8 vs Fix 1 compiled M1<br>Top-20 set/order | "
+            "Fix 1 compiled M8 vs Fix 1 eager M8<br>Top-20 set/order | "
+            "Final compiled M8 vs final eager M8<br>Top-20 set/order | Timing explanation |"
         ),
-        "| --- | --- | ---: | ---: | ---: | --- | --- | --- |",
+        "| --- | --- | ---: | ---: | ---: | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         scores = []
-        for arm in ("old", "fixed"):
+        for arm in ("old", "fixed", "fix1_modes", "final_modes"):
             result = row["isolated_320"].get(arm)
             if result is None:
                 scores.append(
                     "N/A: not a target prediction stage"
                     if row["stage"] in ("Drafter", "Other GPU bookkeeping")
-                    else "Not yet measured"
+                    else "Within convolution/recurrence cuts"
                 )
             else:
                 assert result["positions"] == 320 and result["isolated_inputs_verified"]
                 assert result["reference_remainder_verified"]
-                scores.append(f"{result['top20_set_exact']}/320; {result['top20_order_exact']}/320")
+                suffix = (
+                    " †" if row["stage"] in ("Attention decode", "Attention split-KV merge") else ""
+                )
+                scores.append(
+                    f"{result['top20_set_exact']}/320; {result['top20_order_exact']}/320{suffix}"
+                )
+        delta = f"{row['delta_ms']:+.3f}" if abs(row["delta_ms"]) >= 0.0005 else "0.000"
         table.append(
             f"| {row['stage']} | {row['correctness_change']} | {row['old_ms']:.3f} | "
-            f"{row['fixed_ms']:.3f} | {row['delta_ms']:+.3f} | {scores[0]} | {scores[1]} | "
+            f"{row['fixed_ms']:.3f} | {delta} | {scores[0]} | {scores[1]} | "
+            f"{scores[2]} | {scores[3]} | "
             f"{row['explanation']} |"
         )
     layer_table = [
         (
-            "| Layer (zero-based) | Type | All layer work old ms | Fixed ms | "
-            "Gate/up old ms | Fixed ms | Other three projections old ms | Fixed ms "
-            "| Non-projection old ms | Fixed ms |"
+            "| Layer (zero-based) | Type | All layer work old ms | Final fixed ms | "
+            "Gate/up old ms | Final fixed ms | Other three projections old ms | Final fixed ms "
+            "| Non-projection old ms | Final fixed ms |"
         ),
         "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
@@ -340,7 +375,7 @@ def build(root):
     kernel_table = [
         (
             "| Scope / stage / compiled kernel | Calls old / fixed | Old ms per "
-            "round | Fixed ms per round |"
+            "round | Final fixed ms per round |"
         ),
         "| --- | ---: | ---: | ---: |",
     ]
@@ -369,6 +404,8 @@ def build(root):
     totals = {a: sum(phases[a].values()) for a in exports}
     result = {
         "unit": "GPU dispatch duration summed per round, milliseconds",
+        "versions": {"old": "original compiled M8", "fixed": "final compiled M8: Fix 1 + Fix 2"},
+        "profile_audit": audit["sha256"],
         "paired_profile_rounds_zero_based": rounds,
         "selection": (
             "Intersection of complete modal target kernel inventories; no timing-based exclusions."

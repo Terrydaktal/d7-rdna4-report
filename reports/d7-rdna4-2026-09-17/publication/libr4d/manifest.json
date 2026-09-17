@@ -5,28 +5,28 @@
     {
       "name": "attention",
       "branch": "fix/query-isolated-m8-attention",
-      "commit": "a44607ac8289a6b6e4a4a2bb320864113b8f841c",
+      "commit": "6e7d5ceaf8fa1e1aefa4f9bae1f57ec5af663806",
       "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
       "patch": "attention.patch",
-      "sha256": "ebd09fe2a6147500244fd1efe05ad66878b12a4c0933f4c0032b3dda94a1cbf5",
+      "sha256": "ae4fe2ff47bef7a88e2a0305cb771a0095b4787c1fc96470292ee8f6985c97c4",
       "codeberg_pr_open": false
     },
     {
       "name": "causal-prefill",
       "branch": "fix/causal-gdn-prefill",
-      "commit": "6596517ef4ca813a0066f410623787bac2209afa",
+      "commit": "dcfe72b51c53cdf41b148dfac7bc89e639cf7237",
       "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
       "patch": "causal-prefill.patch",
-      "sha256": "b9a6cdfa3547f132279a18c220c01cfddabb423edca04629bff3d37e8d475d90",
+      "sha256": "a30003130567a40d6cb9a339dcf0e9dbd8f67f1399e3da0025ee1ffb5ff82b52",
       "codeberg_pr_open": false
     },
     {
       "name": "serial-gdn-contract",
       "branch": "fix/serial-contract-gdn",
-      "commit": "5d03c0f1f59837bfd41cc5b9f7f6a248ca2ec37e",
+      "commit": "0c98323ebe27d8222a1d66fdebf1463366c5bf2e",
       "base_commit": "5dc6302b87d598d1d3bf2ad3b50aab365461a63c",
       "patch": "serial-gdn-contract.patch",
-      "sha256": "a01410b1f0070f82dc79863fd4f68650285f4736a1cd3f5409cff68f8052ba65",
+      "sha256": "f92c3e403ba228f8a0e884c7ec2a1f4d4946315f8febb6a918b1e471b0906e2b",
       "codeberg_pr_open": false
     }
   ]

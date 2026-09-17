@@ -23,6 +23,10 @@ port**. It provides a precise oracle for that port. Production dispatch, native
 acceptance/graph checks and full-model qualification of a new libr4d integration
 are still required.
 
+This bundle supplies the GDN reference for **Fix 1**. The report also covers
+**Fix 2**, a separate eager/compiled rounding alignment, and gives all four
+isolated comparison columns on 320 common correct positions.
+
 The tested Radiance integration is already in
 [Radiance #11](https://github.com/magiccodingman/vllm-radiance/pull/11), depending
 on [#10](https://github.com/magiccodingman/vllm-radiance/pull/10).

@@ -1,4 +1,4 @@
-From a44607ac8289a6b6e4a4a2bb320864113b8f841c Mon Sep 17 00:00:00 2001
+From 6e7d5ceaf8fa1e1aefa4f9bae1f57ec5af663806 Mon Sep 17 00:00:00 2001
 From: Terrydaktal <9lewis9@gmail.com>
 Date: Thu, 17 Sep 2026 05:31:31 +0100
 Subject: [PATCH] Add experimental query-isolated M8 attention with shared KV
@@ -9,6 +9,10 @@ Preserve each query's serial softmax and merge decisions while sharing KV loads 
 Publish the qualified downstream transformer, ABI wrapper and native probe beside the generated experimental translation unit. Add source-bound current-header compilation and its recorded successful CPU-only build, with explicit separation from the completed pinned downstream GPU checks. Keep the production dispatcher unchanged until the new header binding and full integration are qualified.
 
 Validation: current-header HIP compilation passed without GPU execution; generated source and copied helper identities verified; no private traces or binaries included. The separate pinned implementation passed 192 query positions, causal interventions and graph checks, and was part of the completed 10K compiled model comparison.
+Link the experiment README directly to the public report and aggregate
+evidence so the prepared upstream submission is reviewable without private
+repository access. This documentation update changes no measured kernel.
+
 Signed-off-by: Terrydaktal <9lewis9@gmail.com>
 ---
  experimental/m1_m8/.gitignore                 |   9 +
@@ -108,7 +112,7 @@ index 0000000..4c68fdd
 +}
 diff --git a/experimental/m1_m8/README.md b/experimental/m1_m8/README.md
 new file mode 100644
-index 0000000..bf8ddc7
+index 0000000..1713385
 --- /dev/null
 +++ b/experimental/m1_m8/README.md
 @@ -0,0 +1,52 @@
@@ -163,7 +167,7 @@ index 0000000..bf8ddc7
 +These are completed downstream measurements, not results for this new header
 +binding. Current-header execution and public-dispatch integration remain open.
 +
-+[Report, exact scope and compiled stage table](https://github.com/Terrydaktal/qwen-r9700-lab/releases/tag/d7-report-v1.0.0).
++[Report, exact scope and compiled stage table](https://github.com/Terrydaktal/d7-rdna4-report/blob/main/reports/d7-rdna4-2026-09-17/REPORT.md).
 diff --git a/experimental/m1_m8/SOURCE_PROVENANCE.json b/experimental/m1_m8/SOURCE_PROVENANCE.json
 new file mode 100644
 index 0000000..a42e35f
