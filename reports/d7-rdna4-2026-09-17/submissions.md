@@ -1,10 +1,10 @@
 # Upstream submissions
 
-Fix 1's compiled M1/M8 pair passed the 10,000-position comparison and 23
-prefills. Fix 2's eager/compiled M8 pair passed the separate 320-position
-comparison and prefill. The report now measures both repairs together in the
-final compiled stage profile. The integration limits below concern ports to
-other upstream builds.
+With both fixes applied, eager M1 and compiled M8 match at all 10,000 decode
+positions and 23 initial-prefill predictions, including full-vocabulary hashes.
+The report compares the original and final pairs on the same Pi corpus; its
+separate 320-position measurements isolate individual stages and execution-mode
+differences. The integration limits below concern ports to other upstream builds.
 
 | Scope | Owning project | Submission state |
 | --- | --- | --- |

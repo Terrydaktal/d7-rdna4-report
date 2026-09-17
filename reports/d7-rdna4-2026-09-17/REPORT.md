@@ -1,6 +1,6 @@
 # Restoring M1/M8 and Eager/Compiled Agreement on RDNA4
 
-**Terrydaktal · 17 September 2026 · Technical report, version 5**
+**Terrydaktal · 17 September 2026 · Technical report, version 6**
 
 ## Abstract
 
@@ -9,18 +9,15 @@ same saved token history was processed one position at a time (M1) or eight
 positions at a time under D7 speculative verification (M8). The investigation
 localized numerical differences in GDN prefill and decode, convolution, gated
 normalization, attention, residual normalization and the BF16 vocabulary head.
-The Fix 1 compiled implementations agree on top-1/10/20 membership,
-ordering, retained scores, inclusive boundary ties and full-vocabulary logit
-hashes at 10,000 decode positions and 23 initial-prefill predictions. Four
-subsequent performance changes reduced a repaired verification round from
-approximately 76 ms to 60 ms in the measured 60K-input control.
+Four performance changes reduced a repaired verification round from approximately
+76 ms to 60 ms in the measured 60K-input control.
 
 A later eager/compiled investigation isolated intermediate BF16 rounding and
 native RoPE multiplication differences. Aligning both produced identical full
 logit vectors at 320 decode positions and the final prefill prediction, with
 identical captured inputs and outputs at all 465 matched activation boundaries.
-This newer eager/compiled M8 result uses a separate 320-position replay; the
-10K comparison has not been repeated under the new rounding settings.
+The combined repair is now measured directly as **eager M1 versus compiled M8**
+before and after both fixes, using the same 10,000-position Pi corpus.
 
 This is an empirical result on one pinned configuration; it does not establish
 arbitrary-input equivalence or improved task accuracy.
@@ -31,7 +28,7 @@ The work consists of **two major fixes**:
 | --- | --- | --- |
 | Original | Pinned backend before these repairs | Baseline |
 | Fix 1 | Align M1/M8 arithmetic and state transitions, then recover performance | Compiled M8 versus compiled M1 |
-| Final: Fix 1 + Fix 2 | Preserve BF16 intermediate rounding in compiled execution and use nearest-even RoPE products in eager execution | Compiled M8 versus eager M8 |
+| Final: Fix 1 + Fix 2 | Preserve BF16 intermediate rounding in compiled execution and use nearest-even RoPE products in eager execution | Compiled M8 versus eager M1 and eager M8 |
 
 ## 1. Configuration and reference
 
@@ -73,19 +70,26 @@ consistency; it is not a percentage of questions answered correctly.
 
 ## 3. Top-1/10/20 and ordering results
 
-### Fix 1, compiled and optimized: full 10K corpus
+### Eager M1 versus compiled M8: before and after both fixes, full 10K corpus
 
-| Prediction | Same token set | Same ordering | Mean shared tokens |
-| --- | ---: | ---: | ---: |
-| Top 1 | 10,000 / 10,000 (100%) | 10,000 / 10,000 (100%) | 1 / 1 |
-| Top 10 | 10,000 / 10,000 (100%) | 10,000 / 10,000 (100%) | 10 / 10 |
-| Top 20 | 10,000 / 10,000 (100%) | 10,000 / 10,000 (100%) | 20 / 20 |
+**Before:** original eager M1 versus original compiled M8.
+**After both fixes:** final eager M1 versus final compiled M8 (Fix 1 + Fix 2).
+Each revision has a freshly measured eager M1 reference. All four runs use the
+same 23 continuations, context lengths and full BF16 target head. Compiled M8
+uses Inductor and piecewise GPU graphs; eager M1 disables compilation and graphs.
 
-Retained scores, inclusive tie sets and full-vocabulary hashes also match at
-all 10,000 positions. All measures separately match for **23/23 initial-prefill
-predictions**. Both workers exited successfully. The completion audit checked
-all per-continuation receipts, fixture identities, widths, aligned positions,
-runtime receipts and the recomputed aggregate.
+| Prediction | Before: same set | Before: same order | Before: mean shared | After both fixes: same set | After both fixes: same order | After both fixes: mean shared |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Top 1 | 9,838 / 10,000 (98.38%) | 9,838 / 10,000 (98.38%) | 0.9838 / 1 | 10,000 / 10,000 (100%) | 10,000 / 10,000 (100%) | 1 / 1 |
+| Top 10 | 4,878 / 10,000 (48.78%) | 761 / 10,000 (7.61%) | 9.3516 / 10 | 10,000 / 10,000 (100%) | 10,000 / 10,000 (100%) | 10 / 10 |
+| Top 20 | 2,313 / 10,000 (23.13%) | 4 / 10,000 (0.04%) | 18.6883 / 20 | 10,000 / 10,000 (100%) | 10,000 / 10,000 (100%) | 20 / 20 |
+
+**Same set** means the same tokens regardless of order. **Same order** additionally
+requires identical ranking. **Mean shared** is the average number of shared
+tokens per position.
+
+After both fixes, full-vocabulary hashes match at **10,000/10,000 decode positions** and **23/23 initial-prefill predictions**. Top-1/10/20 retained scores and inclusive boundary-tie sets also match throughout.
+[Counts, run identities and completion audit](evidence/crossmode-before-final-10k.json).
 
 ### Fresh four-way comparison: 320 positions
 
@@ -106,18 +110,6 @@ compilation and graphs.
 These are **whole-model** results. The isolated stage comparisons in section 4
 use common correct inputs to prevent upstream errors contaminating the stage
 being measured. [Run identities and complete counts](evidence/final-study-four-comparisons.json).
-
-### Historical unfixed eager baseline: same 10K corpus
-
-| Prediction | Same token set | Same ordering | Mean shared tokens |
-| --- | ---: | ---: | ---: |
-| Top 1 | 9,852/10,000 (98.52%) | 9,852/10,000 (98.52%) | 0.9852 / 1 |
-| Top 10 | 4,857/10,000 (48.57%) | 799/10,000 (7.99%) | 9.3487 / 10 |
-| Top 20 | 2,270/10,000 (22.70%) | 9/10,000 (0.09%) | 18.6781 / 20 |
-
-These historical results use eager execution. They must not be presented as an
-unfixed **compiled** 10K measurement. The Fix 1 compiled run uses a fresh
-compiled M1 reference, not this saved eager reference.
 
 ## 4. Compiled stage timings and isolated correctness measurements
 
@@ -612,8 +604,8 @@ Upstream links and submission state are maintained in `submissions.md`.
 The eager/compiled mismatch was localized to intermediate BF16 casts and native
 RoPE multiplication. Aligning both produced exact eager/compiled **M8** output
 agreement on the controlled 320-position Pi replay. This is separate from the
-compiled M1/M8 10K result in section 3; the full 10K eager/compiled comparison
-has not been repeated with the new rounding settings.
+fresh 10K eager-M1/compiled-M8 before/after comparison in section 3, which
+measures both fixes together across all 23 continuations.
 
 The [complete boundary comparison](common-rounding-boundaries.md) also matches
 captured inputs and outputs at all 465 matched boundaries, across 320 decode
@@ -709,13 +701,13 @@ the upstream repair is credited to its existing authors.
 
 ### Remaining coverage limits
 
-- The rounding-aligned eager/compiled result covers 320 M8 decode positions and
-  the final prefill prediction. Full 10K eager/compiled and M1/M8 qualification
-  under these changed settings remains outstanding. The brief compiled speed
-  comparison is reported in §5; eager execution speed has not been measured.
+- The fresh 10K comparison measures eager M1 versus compiled M8 before and after
+  both fixes. The separate eager-M8/compiled-M8 comparison covers 320 positions.
+  Neither establishes arbitrary-input equality. The brief compiled speed
+  comparison is reported in §5; instrumented replay durations are not serving speed.
 - Captured activation equality does not certify uncaptured KV/GDN/convolution
   state, unpaired operations or independent MRoPE coefficient selection.
-- The original compiled 10K replay covers the all-seven-accepted D7 path. Small
+- The 10K replays cover the all-seven-accepted D7 path. Small
   operator tests exercise rejection boundaries and injected faults, but full
   model coverage of every rejection history, long-context range, concurrency,
   snapshot restore and hardware platform is not established.
@@ -739,12 +731,11 @@ private. The aggregate measurements can be audited from the published receipts;
 independent end-to-end reproduction needs a public replacement workload.
 Synthetic operator regressions accompany the corresponding source submissions.
 
-Pinned arithmetic repair SHA-256:
-`8deef78cd58b355d85d142caac58a88ea68ad576a31fe7769cc3db49b18235e9`.
-Final performance bundle SHA-256:
-`d5e74aedda327d5543a0f4a47aeff80ec853c3eea5f9de49051b2d58ec109068`.
-10K summary seal:
-`740f52b749130d91ecb870153a02e8b28c232489c87997423146c2af2d5496f8`.
+The [10K before/after audit](evidence/crossmode-before-final-10k.json) binds all
+four runs to the same corpus and records their source, repair, compiler, graph
+and per-continuation receipt identities. The final eager M1 reference and final
+compiled M8 candidate both include Fix 1 and their respective Fix 2 rounding
+repairs.
 
 ## References and attribution
 

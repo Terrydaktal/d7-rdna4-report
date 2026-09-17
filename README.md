@@ -8,11 +8,15 @@ Terrydaktal · 17 September 2026
 
 This report covers two major repairs on one pinned R9700/Radiance stack:
 
-1. **Fix 1: compiled M1/M8 agreement.** All 10,000 decode positions and 23
-   prefill predictions matched, including full logit vectors.
+1. **Fix 1: compiled M1/M8 agreement.** Align the serial and speculative
+   arithmetic and state transitions while recovering the initial performance cost.
 2. **Fix 2: eager/compiled agreement.** BF16 intermediate and RoPE product
-   rounding were aligned. All 320 decode vectors and the prefill prediction
-   matched; this is a separate sample from the Fix 1 10K qualification.
+   rounding are aligned across execution modes.
+
+After both fixes, **eager M1 and compiled M8 match at all 10,000 decode positions
+and 23 initial-prefill predictions**, including top-1/10/20 sets, ranking and
+full-vocabulary hashes. The report's merged table compares the original and final
+pairs on the same Pi corpus, with a freshly measured eager reference for each.
 
 The stage table gives fresh **Old compiled M8** and **Final fixed compiled M8**
 GPU timings, plus four isolated top-20 set/order comparisons on common correct
@@ -21,6 +25,7 @@ These brief controls use 60K input tokens. The earlier 60K-generated-token
 benchmark is separate. Neither experiment proves arbitrary-input equivalence.
 
 [Upstream submissions](reports/d7-rdna4-2026-09-17/submissions.md) ·
+[10K before/after table](reports/d7-rdna4-2026-09-17/crossmode-10k-table.md) ·
 [Compiled stage table](reports/d7-rdna4-2026-09-17/stage-table.md) ·
 [Compiled rounding speed comparison](reports/d7-rdna4-2026-09-17/rounding-speed-table.md) ·
 [Every layer](reports/d7-rdna4-2026-09-17/layer-table.md) ·
@@ -37,6 +42,7 @@ reports/d7-rdna4-2026-09-17/
 ├── REPORT.md, report.template.md, report.pdf
 ├── evidence/                     Aggregate comparisons and GPU profiles
 ├── evidence-sha256.json          Evidence checksums
+├── crossmode-10k-table.md         Eager M1 vs compiled M8 before/after both fixes
 ├── stage-table.md, stage-times.json, kernel-dispatches.csv
 ├── rounding-speed-table.md
 ├── layer-table.md, kernel-table.md

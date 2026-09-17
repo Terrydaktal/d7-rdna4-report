@@ -6,6 +6,7 @@
   "evidence/compiled-capture-output-bridges.json": "866e3c874b7aa845908ed66a0b84c0beb000bf7750fec7c1202de81234188268",
   "evidence/compiled-execution-audit.json": "629f0983998ab5da50ec25d30bb265ae287fe358a2dd7ebb81e75f7fc9f2ce91",
   "evidence/compiled-m1-m8-boundaries-320.json": "9b86c1de3d4755bfb6ce0e0ac760dd5a9b6e8a31310741c751fd67d93b05cd48",
+  "evidence/crossmode-before-final-10k.json": "efdfb0e55681884761fa56e270a9309be9ffabe6529fb0c8b53863efdbf56832",
   "evidence/current-compiled-eager-320.json": "97210d45ec30aeefab6e22c6d1d12e39269f6bc48c5fddd083f3ba9e52471abc",
   "evidence/current-mode-boundaries-decode.json": "85ee9f2b1084e2b8b336ecf5ba0ff5bd6bec0622d2665fc467b36fbacb584835",
   "evidence/current-mode-boundaries-prefill.json": "5f1ee03dfcec369f61c99a00a0620939561ed2e7c96de70c88801af1007f1a64",

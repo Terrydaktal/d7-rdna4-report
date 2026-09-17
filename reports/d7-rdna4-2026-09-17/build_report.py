@@ -13,6 +13,76 @@ def read(name):
     return json.loads((ROOT / "evidence" / name).read_text())
 
 
+def crossmode_corpus_tables():
+    from build_detailed_tables import authenticated_read
+
+    data = authenticated_read(ROOT / "evidence/crossmode-before-final-10k.json")
+    assert data["schema"] == "qwen.crossmode-corpus-before-final.v1"
+    assert data["status"] == "AUDITED"
+    assert data["common"]["positions"] == 10000
+    for revision in ("before", "final"):
+        result = data["comparisons"][revision]
+        assert result["decode"]["positions"] == 10000
+        assert result["prefill"]["positions"] == 23
+        for arm, mode, width in (("m1", "eager", 1), ("m8", "compiled", 8)):
+            run = data["runs"][f"{revision}-{arm}"]
+            assert (run["mode"], run["target_rows"]) == (mode, width)
+            assert run["positions"] == 10000 and run["responses"] == 23
+            assert (run["target_graph_replays"] > 0) == (mode == "compiled")
+            assert run["precision_casts"] is (revision == "final")
+            assert bool(run["repair"]) == (revision == "final")
+    table = [
+        "| Prediction | Before: same set | Before: same order | Before: mean shared | "
+        "After both fixes: same set | After both fixes: same order | "
+        "After both fixes: mean shared |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+
+    def count(value, total):
+        percent = f"{100 * value / total:.2f}".rstrip("0").rstrip(".")
+        return f"{value:,} / {total:,} ({percent}%)"
+
+    for k in (1, 10, 20):
+        cells = []
+        for revision in ("before", "final"):
+            row = data["comparisons"][revision]["decode"][str(k)]
+            cells.extend(
+                [
+                    count(row["set_exact"], 10000),
+                    count(row["ranked_exact"], 10000),
+                    f"{row['mean_overlap_tokens']:.4f}".rstrip("0").rstrip(".") + f" / {k}",
+                ]
+            )
+        table.append(f"| Top {k} | {' | '.join(cells)} |")
+    final = data["comparisons"]["final"]
+    all_topk = all(
+        final[domain][str(k)][field] == final[domain]["positions"]
+        for domain in ("decode", "prefill")
+        for k in (1, 10, 20)
+        for field in (
+            "set_exact",
+            "ranked_exact",
+            "retained_scores_exact",
+            "inclusive_tie_set_exact",
+        )
+    )
+    summary = (
+        "After both fixes, full-vocabulary hashes match at "
+        f"**{final['decode']['full_logits_exact']:,}/10,000 decode positions** and "
+        f"**{final['prefill']['full_logits_exact']}/23 initial-prefill predictions**. "
+    )
+    summary += (
+        "Top-1/10/20 retained scores and inclusive boundary-tie sets also match throughout."
+        if all_topk
+        else "The complete retained-score, tie and prefill counts are in the linked evidence."
+    )
+    (ROOT / "crossmode-10k-table.md").write_text("\n".join(table) + "\n")
+    return {
+        "{{CROSSMODE_10K_TABLE}}": "\n".join(table),
+        "{{CROSSMODE_10K_SUMMARY}}": summary,
+    }
+
+
 def rounding_speed_tables():
     from build_detailed_tables import authenticated_read
 
@@ -228,6 +298,7 @@ def main():
         table.append(f"| {label} | {' | '.join(cells)} | {result['full_logits_exact']}/320 |")
     replacements["{{FOUR_COMPARISON_TABLE}}"] = "\n".join(table)
     replacements.update(rounding_speed_tables())
+    replacements.update(crossmode_corpus_tables())
     template = ROOT / "report.template.md"
     document = template.read_text()
     for marker, replacement in replacements.items():
