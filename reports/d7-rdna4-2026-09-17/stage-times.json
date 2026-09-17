@@ -240,8 +240,29 @@
       "correctness_change": "Correctness repair",
       "old_ms": 0.0026190000000000002,
       "fixed_ms": 0.005759,
-      "explanation": "Preserve the reference final-normalization reduction and rounding.",
-      "isolated_320": {},
+      "explanation": "Preserve final-normalization reduction and the BF16 rounding of its retained residual sum; isolated check includes that fused addition.",
+      "isolated_320": {
+        "fixed": {
+          "full_logits_exact": 320,
+          "isolated_inputs_verified": true,
+          "positions": 320,
+          "reference_remainder_verified": true,
+          "scope": "Original compiled final normalization including retained residual sum; fixed compiled norm; 320 correct Pi positions, common serial reference head. Not other layers or universal equivalence.",
+          "top1_exact": 320,
+          "top20_order_exact": 320,
+          "top20_set_exact": 320
+        },
+        "old": {
+          "full_logits_exact": 0,
+          "isolated_inputs_verified": true,
+          "positions": 320,
+          "reference_remainder_verified": true,
+          "scope": "Original compiled final normalization including retained residual sum; fixed compiled norm; 320 correct Pi positions, common serial reference head. Not other layers or universal equivalence.",
+          "top1_exact": 320,
+          "top20_order_exact": 230,
+          "top20_set_exact": 306
+        }
+      },
       "delta_ms": 0.00314
     },
     {
@@ -250,7 +271,40 @@
       "old_ms": 4.101219499999999,
       "fixed_ms": 4.134202999999999,
       "explanation": "Interleave two arithmetic-preserving M4 groups in one HIP launch, removing duplicated launch and concatenation overhead.",
-      "isolated_320": {},
+      "isolated_320": {
+        "fixed": {
+          "evaluations": 320,
+          "isolated_inputs_verified": true,
+          "layer_instances": [
+            null
+          ],
+          "positions": 320,
+          "reference_remainder": "identity: vocabulary head is the final numerical stage",
+          "reference_remainder_verified": true,
+          "stage_output_exact": 320,
+          "stage_state_exact": 320,
+          "state_scope": "head is stateless; captured input and checkpoint weights are read-only",
+          "top1_exact": 320,
+          "top20_order_exact": 320,
+          "top20_set_exact": 320
+        },
+        "old": {
+          "evaluations": 320,
+          "isolated_inputs_verified": true,
+          "layer_instances": [
+            null
+          ],
+          "positions": 320,
+          "reference_remainder": "identity: vocabulary head is the final numerical stage",
+          "reference_remainder_verified": true,
+          "stage_output_exact": 0,
+          "stage_state_exact": 320,
+          "state_scope": "head is stateless; captured input and checkpoint weights are read-only",
+          "top1_exact": 320,
+          "top20_order_exact": 320,
+          "top20_set_exact": 320
+        }
+      },
       "delta_ms": 0.032983500000000276
     },
     {

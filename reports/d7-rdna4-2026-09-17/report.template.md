@@ -151,13 +151,35 @@ The first capture prototype altered module boundaries and failed during
 compiler warm-up; it produced no qualifying positions. Its results have not
 been substituted for this successful capture.
 
-The subsequent isolated-head probe was interrupted by a host OOM-killer event
-after reaching its 320-position progress marker and before final validation and
-result publication. It contributes **no completed isolated-stage result** to
-the table. The original compiled reference evidence is preserved in verified
-encrypted archives; repeating the intermediate capture and completing isolated
-comparisons remain outstanding. No eager-versus-compiled M8 stage comparison
-has yet been completed.
+The earlier isolated-head attempt was interrupted by a host OOM-killer event
+before final validation and contributes no qualifying result. After recovering
+the exact archived fixture, a fresh compiled capture reproduced the release at
+all 320 decode positions and the prefill prediction. Its
+[controlled output bridge](evidence/mode-compiled-capture-bridge.json) also checks
+source, capacity and numerical configuration identities.
+
+The completed [isolated head check](evidence/isolated-head-320.json) uses these
+correct hidden rows, actual original and repaired head implementations, and
+GPU graph replay in every arm. **Both heads preserve top-1 and top-20 set/order
+at 320/320 positions.** Full reference logits match at **0/320 old and 320/320
+fixed** positions: identical rankings in this sample do not imply identical
+scores. Every serial reference head result reproduced its saved in-model
+logits. Input/weight immutability and the injected one-bit fault check passed.
+The completed [isolated final-normalization check](evidence/isolated-final-norm-320.json)
+replays the original generated compiled kernel, including the retained residual
+addition fused into it, on the same correct inputs. With the common serial
+reference head, old M8 preserves top-20 sets at **306/320** positions and their
+ordering at **230/320**; fixed M8 preserves both at **320/320**. Top-1 matches
+at all 320 positions in both arms. Full hidden rows and full logits match at
+**0/320 old and 320/320 fixed** positions. The old fused kernel omits the
+intermediate BF16 rounding of the retained residual sum. The experiment checks
+that expanding this fused input boundary reproduces the reference carry,
+hidden rows and final logits before counting any result. It covers this final
+normalization and its fused residual addition, not every normalization layer.
+
+Other isolated stages remain outstanding; these two measurements are not
+copied into their cells. The controlled eager-versus-compiled output result
+is reported in section 7; its boundary localization remains separate.
 
 {{STAGE_TABLE}}
 
@@ -301,11 +323,148 @@ before speculative decode, but not to an individual operator.
 
 This is **not a same-build, mode-only test**. The earlier eager runner uses
 `max_num_seqs=1`, while the compiled runner uses `2`; their repair integration
-and performance implementations also differ. The next controlled experiment
-must equalize those settings, compare prefill, and then compare eager M8 with
-compiled M8 on identical saved tokens and stage inputs. No new GPU run was
-needed for this historical comparison. See
+and performance implementations also differ. No new GPU run was needed for
+this historical comparison. See
 [recovered M8 comparison](evidence/historical-eager-to-compiled-m8.json).
+
+### Current build, controlled eager versus compiled M8: 320 positions
+
+A fresh experiment now holds the fixture, repair/performance implementations,
+source identities, numerical settings and cache capacity fixed, including
+`max_num_seqs=2`. Only the execution mode changes. The
+[admission and comparison receipt](evidence/current-compiled-eager-320.json)
+checks those identities before comparing results.
+
+| Prediction | Same token set | Same ordering | Mean shared tokens |
+| --- | ---: | ---: | ---: |
+| Top 1 | 319/320 (99.6875%) | 319/320 (99.6875%) | 0.996875 / 1 |
+| Top 10 | 146/320 (45.625%) | 14/320 (4.375%) | 9.328125 / 10 |
+| Top 20 | 66/320 (20.625%) | 0/320 (0%) | 18.6625 / 20 |
+
+Full-logit digests agree at **0/320** decode positions. The initial-prefill
+full vector also differs: its top-1 agrees, while its top-20 sets share 19/20
+tokens. Thus a difference exists before speculative decode in this controlled
+configuration too. These output measurements alone do not establish which
+execution better matches an independent model.
+
+Both instrumented captures now reproduce their respective uninstrumented
+controls exactly, including full decode and prefill logits. The first eager
+attempt exhausted a 24 GiB shared-memory filesystem and is excluded; its evidence
+was encrypted and fully read back before retiring the incomplete tensor files.
+The completed retry used a 40 GiB temporary limit. See the
+[eager capture bridge](evidence/mode-eager-capture-bridge.json).
+
+### First localized mode difference: MLP SiLU/gating
+
+The [prefill](evidence/current-mode-boundaries-prefill.json) and
+[decode](evidence/current-mode-boundaries-decode.json) comparisons align unique
+operation names and logical owners. At the first layer, captured inputs and
+outputs agree through input normalization, GDN projections and gated norm,
+post-GDN normalization, and the MLP gate/up projection. SiLU/gating is the first
+differing operation, before the down projection. Later mismatches can inherit
+this difference; they are not automatically additional independent defects.
+The [complete boundary table](execution-mode-boundaries.md) lists every matched
+logical owner with separate prefill/decode input and output counts.
+
+The [isolated native SiLU replay](evidence/isolated-silu-modes-320.json) exercises
+all 64 layers on the same captured inputs: **20,480 layer-position evaluations**
+for decode and 576 for sampled prefill. Every original compiled and eager kernel
+reproduces its own captured output; input immutability and a one-bit negative
+control pass. No complete SiLU output row agrees between the modes. Across the
+decode evaluations, 96,380,748 of 356,515,840 activation values differ.
+
+The principal arithmetic distinction is the intermediate BF16 rounding:
+
+```text
+eager:    BF16(BF16(SiLU(gate)) * up)
+compiled: BF16(SiLU_FP32(gate) * up)
+```
+
+The explicit BF16-intermediate PyTorch calculation matches eager in all 20,480
+decode evaluations. The independent FP32-intermediate calculation differs from
+the generated compiled kernel in 17 individual values, across 17 evaluations,
+so even matching the intermediate precision does not prove the exact FP32
+arithmetic is identical. These are operator-output comparisons, not vocabulary
+top-20 measurements or accuracy scores.
+
+A [controlled intervention](evidence/silu-intervention-vs-eager.json) enables
+the existing native `silu_and_mul` operation in compiled execution, keeping all
+other recorded settings fixed. This alone does **not** restore end-to-end mode
+equality: top-1 agrees at 318/320, top-10 sets/order at 154/320 and 21/320,
+and top-20 sets/order at 66/320 and 0/320. All full vectors still differ.
+The initial-prefill top-20 set now agrees, although ordering and scores differ.
+This experiment is not a production configuration change or a replacement for
+the report's qualified compiled run.
+
+### Further localized differences: RoPE and attention gating
+
+The SiLU intervention moves the first observed prefill divergence past layers
+0–2 to the first attention layer (layer 3). Its QKV projection and Q/K
+normalization outputs still agree. The first named differing boundary is the
+input to attention's output projection; the
+[prefill boundary receipt](evidence/silu-intervention-prefill-boundaries.json)
+preserves that distinction between inherited and locally produced differences.
+
+A separate [native pilot](evidence/rope-gate-native-pilot.json) isolates two
+operations on **eight sampled prefix positions**, rather than claiming 320
+positions for this pilot:
+
+| Operation, on common input | Exact output rows | Differing values | Largest absolute difference |
+| --- | ---: | ---: | ---: |
+| RoPE, native eager-compatible versus compiled query rotation | 1/8 | 1,496 | 0.03125 |
+| Attention sigmoid gating, compiled versus eager | 0/8 | 13,524 | 0.00390625 |
+
+The native NeoX-style RoPE calculation reproduces captured eager Q and K in
+all eight positions using the same selected cosine/sine coefficients. Position
+zero is the identity rotation, explaining its match. This isolates rotation
+arithmetic; it does **not** certify the MRoPE coefficient-selection algorithm.
+For gating, each implementation reproduces its own captured output in all eight
+positions, then differs when evaluated on the same attention output and gate.
+Compiled gating retains the sigmoid in FP32 before multiplying, whereas eager
+materializes the sigmoid in BF16. These are numerical-contract differences;
+they do not establish that eager is closer to an independent mathematical
+reference or that each difference causes a user-visible error.
+
+The pilot also corrects an earlier diagnostic argument-mapping error: the gate
+is compiled argument 1, while argument 0 is the attention output. The superseded
+gate-input comparison is identified explicitly in the receipt.
+
+A fresh [compiled M1/M8 control](evidence/fresh-m1-m8-output-320.json) still
+matches all 320 full-vocabulary vectors and the prefill vector. The mode
+differences therefore coexist with the repaired compiled M1/M8 agreement.
+
+The [intermediate compiled M1/M8 comparison](compiled-m1-m8-boundaries.md)
+also matches outputs at **466 named activation boundaries across all 320
+positions**. Captured inputs agree at 465 of those boundaries; the remaining
+boundary has no comparable captured input. Eight serial observations are
+aligned by logical position with each M8 group. Physical KV block size/count
+differ because M1 has no drafter, and both capacities are retained in the
+[admission receipt](evidence/compiled-m1-m8-boundaries-320.json). This supports
+the use of these captured activations as the compiled reference inputs, but
+does not extend the claim to uncaptured recurrent/cache state or supply the
+still-missing isolated old-M8 measurements.
+
+### Compiler precision-cast option: tested, not a complete fix
+
+The installed Inductor exposes `TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1` to
+preserve low-precision intermediate casts that its default compilation can
+eliminate. The experiment records both that environment value and the actual
+loaded `emulate_precision_casts` boolean; the compiler confirms the requested
+setting in both arms. Fresh controls reproduce the original mode-agreement
+counts. The [declared intervention receipt](evidence/precision-casts-vs-eager.json)
+admits only this explicit numerical change, retaining the original receipts.
+
+| Comparison with eager, 320 positions | Top-1 set/order | Top-10 set/order | Top-20 set/order | Full vectors exact |
+| --- | ---: | ---: | ---: | ---: |
+| Default compiled | 319/319 | 146/14 | 66/0 | 0/320 |
+| Compiled with precision-cast emulation | 316/316 | 151/22 | 76/0 | 0/320 |
+
+Each set/order pair gives counts out of 320, not percentages. The initial
+prefill vector also differs in both comparisons. This option alone does not
+establish the same arithmetic contract, and the small ranking changes do not
+establish an accuracy improvement. It is retained as a failed diagnostic
+intervention, not recommended as a production repair. These correctness runs
+do not change the compiled release timings in this report.
 
 The final 10K replay covers the all-seven-accepted D7 path. Separate small
 operator tests exercise acceptance boundaries, state/history comparisons,

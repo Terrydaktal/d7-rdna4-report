@@ -83,6 +83,42 @@ FIXES = {
 
 
 def main():
+    from build_detailed_tables import authenticated_read
+    from build_execution_mode_tables import build as build_mode_tables
+
+    modes = authenticated_read(ROOT / "evidence/current-compiled-eager-320.json")
+    assert modes["decode"]["positions"] == 320 and modes["decode"]["full_logits_exact"] == 0
+    assert [
+        (modes["decode"][k]["set_exact"], modes["decode"][k]["ranked_exact"])
+        for k in ("1", "10", "20")
+    ] == [(319, 319), (146, 14), (66, 0)]
+    silu = authenticated_read(ROOT / "evidence/isolated-silu-modes-320.json")
+    assert silu["status"] == "SAMPLE_CHECKED" and silu["negative_control_detected"]
+    assert silu["inputs_unchanged"]
+    decoded = list(silu["results"]["decode"].values())
+    assert len(decoded) == 64 and all(row["own_capture_reproduced"] == 320 for row in decoded)
+    assert (
+        sum(row["compiled_vs_eager_on_common_input"]["different_elements"] for row in decoded)
+        == 96380748
+    )
+    assert sum(row["torch_native_vs_eager"]["exact_positions"] for row in decoded) == 20480
+    assert sum(row["torch_fp32_vs_compiled"]["exact_positions"] for row in decoded) == 20463
+    pilot = authenticated_read(ROOT / "evidence/rope-gate-native-pilot.json")
+    assert pilot["positions"] == 8 and pilot["gate"]["gate_input_exact"]
+    assert pilot["rope"]["True"]["eager_q"]["exact_positions"] == 8
+    assert pilot["rope"]["True"]["eager_k"]["exact_positions"] == 8
+    assert pilot["rope"]["True"]["compiled_q"]["different_elements"] == 1496
+    assert pilot["gate"]["common_input_compiled_vs_eager"]["different_elements"] == 13524
+    assert pilot["gate"]["compiled_reproduces_own_output"]["exact_positions"] == 8
+    assert pilot["gate"]["eager_reproduces_own_output"]["exact_positions"] == 8
+    precision = authenticated_read(ROOT / "evidence/precision-casts-vs-eager.json")
+    assert precision["decode"]["positions"] == 320
+    assert precision["decode"]["full_logits_exact"] == 0
+    assert [
+        (precision["decode"][k]["set_exact"], precision["decode"][k]["ranked_exact"])
+        for k in ("1", "10", "20")
+    ] == [(316, 316), (151, 22), (76, 0)]
+    build_mode_tables(ROOT)
     profiles = {arm: read(f"{arm}-compiled-profile.json") for arm in ("old", "fixed")}
     groups = {}
     dispatches = []
@@ -242,7 +278,8 @@ def main():
     assert cross_mode["prefill"]["full_logits_exact"] == 0
     for k, counts in {"1": (9811, 9811), "10": (4845, 756), "20": (2227, 4)}.items():
         assert (
-            cross_mode["decode"][k]["set_exact"], cross_mode["decode"][k]["ranked_exact"]
+            cross_mode["decode"][k]["set_exact"],
+            cross_mode["decode"][k]["ranked_exact"],
         ) == counts
     assert summary["decode"]["positions"] == 10000
     assert summary["prefill"]["positions"] == 23

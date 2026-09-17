@@ -144,7 +144,10 @@ STAGES = {
     ),
     "Final normalization/layout": (
         "Correctness repair",
-        "Preserve the reference final-normalization reduction and rounding.",
+        (
+            "Preserve final-normalization reduction and the BF16 rounding of its "
+            "retained residual sum; isolated check includes that fused addition."
+        ),
     ),
     "Full BF16 target head": (
         "Correctness + performance",
@@ -172,6 +175,42 @@ STAGES = {
 
 def close(a, b):
     assert math.isclose(a, b, rel_tol=1e-10, abs_tol=1e-5), (a, b)
+
+
+def authenticated_read(path):
+    data = json.loads(path.read_text())
+    unsigned = {k: v for k, v in data.items() if k != "sha256"}
+    encoded = json.dumps(unsigned, allow_nan=False, sort_keys=True, separators=(",", ":"))
+    assert hashlib.sha256(encoded.encode()).hexdigest() == data["sha256"], path.name
+    return data
+
+
+def isolated_measurements(root):
+    path = root / "evidence" / "isolated-stage-320.json"
+    if not path.exists():
+        return {"stages": {}}
+    data = authenticated_read(path)
+    known = {
+        "Full BF16 target head": "isolated-head-320.json",
+        "Final normalization/layout": "isolated-final-norm-320.json",
+    }
+    assert set(data["stages"]) <= known.keys(), "new stages need receipt validation"
+    for name, values in data["stages"].items():
+        receipt = authenticated_read(root / "evidence" / known[name])
+        assert receipt["status"] == "SAMPLE_CHECKED" and receipt["negative_control_detected"]
+        assert data["receipts"][name] == receipt["sha256"]
+        assert set(values) == {"old", "fixed"}
+        for arm, result in values.items():
+            native = receipt["results"][arm]
+            for key in ("positions", "top1_exact", "top20_set_exact", "top20_order_exact"):
+                assert result[key] == native[key], (name, arm, key)
+            assert result["positions"] == 320
+        if name == "Final normalization/layout":
+            assert receipt["reference_remainder_checked"] == 320 and receipt["weights_unchanged"]
+            assert all(v["scope"] == receipt["scope"] for v in values.values())
+        else:
+            assert values == receipt["results"]
+    return data
 
 
 def build(root):
@@ -221,10 +260,7 @@ def build(root):
             row[0] += 1
             row[1] += us / divisor
         close(sum(phases[arm].values()), sum(r[5] for r in selected[arm]) / divisor)
-    correctness_path = root / "evidence" / "isolated-stage-320.json"
-    correctness = (
-        json.loads(correctness_path.read_text()) if correctness_path.exists() else {"stages": {}}
-    )
+    correctness = isolated_measurements(root)
     rows = []
     for name, (repair, explanation) in STAGES.items():
         measurements = correctness["stages"].get(name, {})
