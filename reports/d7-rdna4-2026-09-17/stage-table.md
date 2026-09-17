@@ -1,18 +1,31 @@
-| Compiled GPU stage/group | Old M8 (ms) | Fixed M8 (ms) | Repair / interpretation |
-| --- | ---: | ---: | --- |
-| MXFP4 folded projections | 24.243 | 25.496 | No projection arithmetic change. |
-| MXFP4 projections, split-4 kernel | 7.633 | 7.554 | No projection arithmetic change. |
-| MXFP4 projections, split-1 kernel | 4.981 | 4.973 | No projection arithmetic change. |
-| Attention decode | 4.104 | 5.673 | Keep each query's serial causal tile/reduction contract; share KV reads across eight queries. |
-| Attention split-KV merge | 0.255 | 0.124 | Preserve the serial per-query split/merge arithmetic. |
-| Activation FP8 quantization | 2.485 | 0.815 | Same quantization kernel; measured timing change is not evidence of a quantizer repair. |
-| GDN recurrent update and gates | 1.150 | 1.211 | Match serial gate precision, reduction order, recurrent transition and output rounding; preserve packed QKV views. |
-| GDN convolution | 0.769 | 0.228 | Use the qualified serial product/accumulation order with rolling state; remove unnecessary packed-QKV copies. |
-| Attention KV write | 0.148 | 0.047 | No KV-format change; timing includes the same cache-write kernel. |
-| Explicit residual and Q/K/final normalization | Included in fused group | 0.813 | Preserve reduction tree, rsqrt and BF16 rounding boundaries; retain FP32 residual sums in registers. |
-| Explicit GDN gated normalization | Included in fused group | 0.098 | Fix the row tile at the serial shape while processing all rows in parallel. |
-| Compiler-fused normalization, activations, embedding and other pointwise work | 1.398 | 0.336 | Bind repaired normalization as opaque compiled operators before graph capture; remaining operations retain compiler fusion. |
-| Target copies, conversions and buffer initialization | 0.633 | 0.359 | Keep packed GDN views and remove three materializations plus concatenation; other copies remain. |
-| Full BF16 vocabulary head | 4.106 | 4.134 | Two interleaved M4 groups in one HIP launch preserve serial arithmetic without two launches and concatenation. |
-| Drafter, including proposal head | 6.334 | 6.447 | Unchanged drafter; kept separate from target correctness. |
-| GPU work outside attributed model stages | 0.918 | 0.512 | Includes sampling/state bookkeeping/copies; no invented per-operation attribution. |
+| Compiled stage | Correctness fix? | Old M8 ms | Fixed M8 ms | Change ms | Old M8 isolated top-20, set/order | Fixed M8 isolated top-20, set/order | Timing explanation |
+| --- | --- | ---: | ---: | ---: | --- | --- | --- |
+| Embedding + first input normalization | Normalization repair; embedding unchanged | 0.004 | 0.008 | +0.004 | Not yet measured | Not yet measured | Preserve the reference normalization rounding; the original embedding/norm fusion is indivisible. |
+| Layer input residual/normalization | Correctness + performance | 0.180 | 0.357 | +0.177 | Not yet measured | Not yet measured | Preserve reduction and rounding; retain FP32 residual sums in registers. |
+| GDN input activation FP8 quantization | No correctness repair | 0.487 | 0.128 | -0.359 | Not yet measured | Not yet measured | Same quantization kernel and call count; the measured reduction has no isolated causal attribution. |
+| GDN input projection | No correctness repair | 3.879 | 3.875 | -0.004 | Not yet measured | Not yet measured | Unchanged MXFP4 projection arithmetic; timing differences are observations, not a projection optimization. |
+| GDN layout/copies and buffer initialization | Performance only | 0.762 | 0.332 | -0.430 | Not yet measured | Not yet measured | Preserve packed QKV views; remove split materializations and repacking. Remaining copies are included. |
+| GDN convolution | Correctness + performance | 0.772 | 0.228 | -0.543 | Not yet measured | Not yet measured | Match serial product/accumulation order and rolling history; packed transport removes surrounding copies. |
+| GDN recurrence and gates | Correctness repair | 1.150 | 1.218 | +0.067 | Not yet measured | Not yet measured | Match gate precision, reduction order, recurrent-state transition and output rounding. |
+| GDN output gated normalization | Correctness + performance | 0.399 | 0.098 | -0.301 | Not yet measured | Not yet measured | Keep the serial row tile while processing independent rows concurrently; original fused constituents remain grouped. |
+| GDN output activation FP8 quantization | No correctness repair | 0.254 | 0.131 | -0.123 | Not yet measured | Not yet measured | Same quantization kernel and call count; the timing reduction is not an established quantizer improvement. |
+| GDN output projection | No correctness repair | 1.897 | 1.886 | -0.011 | Not yet measured | Not yet measured | Unchanged MXFP4 arithmetic; no causal speedup claimed. |
+| Attention input activation FP8 quantization | No correctness repair | 0.167 | 0.042 | -0.124 | Not yet measured | Not yet measured | Same quantization kernel and call count; timing cause is not isolated. |
+| Attention input projection | No correctness repair | 1.104 | 1.099 | -0.004 | Not yet measured | Not yet measured | Unchanged QKV MXFP4 projection; no causal speedup claimed. |
+| Attention Q/K normalization, RoPE and layout | Normalization repair; RoPE unchanged | 0.220 | 0.240 | +0.020 | Not yet measured | Not yet measured | Keep serial normalization arithmetic. Fused original normalization/RoPE constituents cannot be timed separately. |
+| Attention KV write | No correctness repair | 0.157 | 0.047 | -0.110 | Not yet measured | Not yet measured | Same cache-write kernel and KV format; timing cause is not isolated. |
+| Attention decode | Correctness + performance | 4.112 | 5.262 | +1.150 | Not yet measured | Not yet measured | Preserve each query's causal tile/softmax decisions. Share KV reads within one or two tile-aligned query groups; two groups repeat context work. |
+| Attention split-KV merge | Correctness repair | 0.253 | 0.121 | -0.132 | Not yet measured | Not yet measured | Use each query's serial split/merge arithmetic; the observed reduction has not been isolated from the decode change. |
+| Attention output gating | No correctness repair | 0.039 | 0.032 | -0.006 | Not yet measured | Not yet measured | Unchanged pointwise operation; measured variation has no isolated causal attribution. |
+| Attention output activation FP8 quantization | No correctness repair | 0.167 | 0.046 | -0.121 | Not yet measured | Not yet measured | Same quantization kernel and call count; timing cause is not isolated. |
+| Attention output projection | No correctness repair | 0.562 | 0.521 | -0.041 | Not yet measured | Not yet measured | Unchanged output MXFP4 projection; no causal speedup claimed. |
+| Post-attention/GDN residual/normalization | Correctness + performance | 0.161 | 0.353 | +0.192 | Not yet measured | Not yet measured | Preserve serial reduction/rounding and keep residual values in registers. |
+| MLP gate/up input FP8 quantization | No correctness repair | 0.648 | 0.168 | -0.481 | Not yet measured | Not yet measured | Same quantization kernel and call count; timing cause is not isolated. |
+| MLP gate/up projection | No correctness repair | 24.336 | 25.500 | +1.164 | Not yet measured | Not yet measured | One joint gate/up GEMM per layer, 64 per round. The per-layer table subdivides this total; gate and up have no separate measured durations. |
+| MLP SiLU and gating | No correctness repair | 0.148 | 0.179 | +0.031 | Not yet measured | Not yet measured | Unchanged compiler-fused SiLU/gating; no causal timing improvement claimed. |
+| MLP down input FP8 quantization | No correctness repair | 0.713 | 0.298 | -0.415 | Not yet measured | Not yet measured | Same quantization kernel and call count; timing cause is not isolated. |
+| MLP down projection | No correctness repair | 5.174 | 5.147 | -0.027 | Not yet measured | Not yet measured | Unchanged MXFP4 down projection; no causal speedup claimed. |
+| Final normalization/layout | Correctness repair | 0.003 | 0.006 | +0.003 | Not yet measured | Not yet measured | Preserve the reference final-normalization reduction and rounding. |
+| Full BF16 target head | Correctness + performance | 4.101 | 4.134 | +0.033 | Not yet measured | Not yet measured | Interleave two arithmetic-preserving M4 groups in one HIP launch, removing duplicated launch and concatenation overhead. |
+| Drafter | No target correctness repair | 6.332 | 6.404 | +0.072 | N/A: not a target prediction stage | N/A: not a target prediction stage | Unchanged proposal model; its timings and predictions are not target-M1 equivalence measurements. |
+| Other GPU bookkeeping | Not an isolated numerical stage | 0.935 | 0.549 | -0.385 | N/A: not a target prediction stage | N/A: not a target prediction stage | Sampling/state bookkeeping outside the model scopes. Exact semantic attribution is unavailable; each kernel remains listed below. |

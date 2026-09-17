@@ -1,10 +1,16 @@
 {
+  "evidence/brief-speed-controls.json": "1e17097eec945d6416af3adb699d143bcfa2710a0ae59ee67abdef4122ca8838",
+  "evidence/compiled-capture-output-bridges.json": "866e3c874b7aa845908ed66a0b84c0beb000bf7750fec7c1202de81234188268",
+  "evidence/compiled-execution-audit.json": "629f0983998ab5da50ec25d30bb265ae287fe358a2dd7ebb81e75f7fc9f2ce91",
   "evidence/eager-to-compiled-m1.json": "41a493a501b4d9b74cb8c5f59a6eb496f20117c4fd83f9eb56c3f88082c458a6",
+  "evidence/earlier-60k-output-speed.json": "ba4650e7011e7563d1510bd70103568e1aa6cf5328f293be3a0dd5a6e94a4da8",
   "evidence/fixed-compiled-10k-audit.json": "0944d1d9f21f5710b97ed4a10c5df696ae8c9125b2a46c3638262b6e8e7c80db",
   "evidence/fixed-compiled-10k-summary.json": "0e2ea8108e273893e5e79f6d2ee6901a17b79b4d7d2c816a69e99d1fb0d746a8",
   "evidence/fixed-compiled-320-comparison.json": "646daaede918fa8107bc9b1ec2253c6ad1a2d7a4b11c97282d0db3d2d79eba80",
+  "evidence/fixed-compiled-dispatches.json": "e9896e69f0736d00b46c47e7c839377815989069112214c95753d7db04c4b514",
   "evidence/fixed-compiled-profile.json": "b3ee37f431a2f9da396e6d087c02387e0bb78075c1dcf3ec3a7da224f161ec9e",
   "evidence/old-compiled-320-comparison.json": "1d61eef89358119efdf1bb5990b30cd092d171db8557ec95d73106821717ede9",
+  "evidence/old-compiled-dispatches.json": "4b8c255520ec8069d3de6900c05b2c5afd863744ed54ffee9d4db5d37287d5a0",
   "evidence/old-compiled-profile.json": "3dec23e11220cb0b697aeaba0fc434c6a04ff33fcef843dbd8dc642644fc9921",
   "evidence/upstream-norm-probe.json": "801be1742c69bc551250eaffbbc8752a7222a5ebefd3a5e77855e7f02a237b14"
 }

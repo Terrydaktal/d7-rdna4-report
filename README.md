@@ -15,6 +15,8 @@ outside that claim.
 
 [Upstream submissions](reports/d7-rdna4-2026-09-17/submissions.md) ·
 [Compiled stage table](reports/d7-rdna4-2026-09-17/stage-table.md) ·
+[Every layer](reports/d7-rdna4-2026-09-17/layer-table.md) ·
+[Every compiled kernel](reports/d7-rdna4-2026-09-17/kernel-table.md) ·
 [Aggregate evidence](reports/d7-rdna4-2026-09-17/evidence/) ·
 [Optional PDF](reports/d7-rdna4-2026-09-17/report.pdf)
 
@@ -26,7 +28,10 @@ reports/d7-rdna4-2026-09-17/
 ├── evidence/                     Aggregate comparisons and GPU profiles
 ├── evidence-sha256.json          Evidence checksums
 ├── stage-table.md, stage-times.json, kernel-dispatches.csv
-├── build_report.py, build_pdf.py
+├── layer-table.md, kernel-table.md
+├── historical-eight-round-stage-table.md
+├── build_report.py, build_detailed_tables.py, analyze_compiled_trace.py
+├── build_pdf.py
 ├── probe_upstream_gdn_norm.py
 ├── submissions.md
 └── publication/
@@ -37,6 +42,8 @@ reports/d7-rdna4-2026-09-17/
 | Script | Input | Output / role |
 | --- | --- | --- |
 | `build_report.py` | Aggregate JSON receipts and Markdown template | Verifies aggregate assertions and kernel accounting; rebuilds the report, stage tables, dispatch CSV and evidence checksums. No GPU required. |
+| `build_detailed_tables.py` | Sanitized per-dispatch exports and original aggregate receipts | Checks all recorded dispatch totals, selects paired rounds by inventory completeness, and generates semantic-stage, 64-layer and compiled-kernel tables. Called by `build_report.py`. |
+| `analyze_compiled_trace.py` | Private profiler traces and their pinned original aggregate receipts | Validates graph replays, kernel/layer attribution and trace identity; exports only timings, symbols, layer IDs and round IDs. Original private traces are not published. This preparation step has already produced the checked-in exports. |
 | `build_pdf.py` | `REPORT.md` | Optional HTML/PDF rendering, with dependencies pinned in the script. |
 | `probe_upstream_gdn_norm.py` | Compatible pinned ROCm/Triton/vLLM environment | Native synthetic gated-normalization comparison and JSON metrics; requires a GPU. |
 | `publication/head/probe.py` | Compatible ROCm/PyTorch environment and adjacent HIP source | Native interleaved-head comparison and JSON results; see its README for prerequisites and commands. |
@@ -60,3 +67,10 @@ original private Pi corpus, raw token IDs and full execution traces are not
 included; independently repeating the full model experiment needs a suitable
 workload and the pinned backend. Native probes are separate from the report
 build and do not run automatically.
+
+The roughly 84 tok/s final result covers three short natural responses on a
+60,000-token input. It is not a 60,000-output-token throughput result. The earlier
+long-output benchmark is reported separately, and predates the final D7 repairs.
+Both timing traces use compiled execution with observed GPU graph replay.
+The detailed table identifies actual code repairs separately from observed
+timing changes. An unmeasured isolated stage has no top-20 correctness claim.

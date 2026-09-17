@@ -3,6 +3,8 @@
 import csv
 import hashlib
 import json
+import math
+import statistics
 from collections import defaultdict
 from pathlib import Path
 
@@ -121,8 +123,10 @@ def main():
         (
             "target_vocabulary_head",
             "Full BF16 vocabulary head",
-            "Two interleaved M4 groups in one HIP launch preserve serial arithmetic without "
-            "two launches and concatenation.",
+            (
+                "Two interleaved M4 groups in one HIP launch preserve serial arithmetic without "
+                "two launches and concatenation."
+            ),
         ),
         (
             "drafter",
@@ -165,15 +169,70 @@ def main():
         ]
         table.append(f"| {row['stage']} | {values[0]} | {values[1]} | {row['repair']} |")
     (ROOT / "stage-table.md").write_text("\n".join(table) + "\n")
-    template = ROOT / "report.template.md"
-    if template.exists():
-        (ROOT / "REPORT.md").write_text(
-            template.read_text().replace("{{STAGE_TABLE}}", "\n".join(table))
-        )
     with (ROOT / "kernel-dispatches.csv").open("w") as out:
-        writer = csv.DictWriter(out, fieldnames=list(dispatches[0]))
+        writer = csv.DictWriter(out, fieldnames=list(dispatches[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(dispatches)
+    # Retain the original eight-round aggregation, then build the finer table
+    # from independently audited individual dispatches and complete rounds.
+    (ROOT / "historical-eight-round-stage-table.md").write_text("\n".join(table) + "\n")
+    from build_detailed_tables import build
+
+    replacements = build(ROOT)
+    speed = read("brief-speed-controls.json")
+    speed_table = [
+        (
+            "| Compiled configuration | Natural responses | Output tokens | Timed "
+            "post-first seconds | Median round | Pooled post-first rate |"
+        ),
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    labels = {
+        "original": "Original, full BF16 target head",
+        "initial_repair": "Correctness repair, before performance recovery",
+        "first_three_changes": "Repair after first three performance changes",
+        "final_four_changes": "Final repair, all four performance changes",
+    }
+    for name, label in labels.items():
+        row = speed["controls"][name]
+        passes = row["passes"]
+        assert len(passes) == 3 and all(p["finish_reason"] == "stop" for p in passes)
+        assert [p["index"] for p in passes] == [1, 2, 3]
+        assert row["output_tokens"] == sum(p["output_tokens"] for p in passes)
+        assert math.isclose(
+            row["median_round_ms"], statistics.median(p["steady_median_step_ms"] for p in passes)
+        )
+        assert math.isclose(
+            row["post_first_tps"],
+            sum(p["after_first_tokens"] for p in passes)
+            / sum(p["after_first_seconds"] for p in passes),
+        )
+        speed_table.append(
+            f"| {label} | 3 | {row['output_tokens']:,} | {row['post_first_seconds']:.3f} | "
+            f"{row['median_round_ms']:.3f} ms | {row['post_first_tps']:.3f} tok/s |"
+        )
+    replacements["{{SPEED_TABLE}}"] = "\n".join(speed_table)
+    replacements["{{SPEED_SUMMARY}}"] = (
+        "The final row now uses three natural responses, replacing the previous one-response "
+        "86.665 tok/s result. Individual final responses produced 743, 848 and 704 tokens "
+        "at 86.790, 79.240 and 87.529 tok/s. The first and third output digests match the "
+        "earlier repaired controls. The middle response differs starting at zero-based token "
+        "offset 671 and has 848 tokens rather than 790. A subsequent run of the same "
+        "four-change build reproduced all three original digests and lengths "
+        "(743/790/704); the middle-response variation is intermittent and its cause "
+        "is not established. The table retains the first complete three-response "
+        "measurement rather than replacing it with the faster repeat. "
+        "Consequently this report does **not** claim that all three sampled continuations "
+        "were preserved by the final change. This does not alter the separate, completed "
+        "forced-token 10K result. See "
+        "[brief-speed-controls.json](evidence/brief-speed-controls.json)."
+    )
+    template = ROOT / "report.template.md"
+    document = template.read_text()
+    for marker, replacement in replacements.items():
+        document = document.replace(marker, replacement)
+    assert "{{" not in document, "unexpanded report field"
+    (ROOT / "REPORT.md").write_text(document)
     summary = read("fixed-compiled-10k-summary.json")
     assert summary["decode"]["positions"] == 10000
     assert summary["prefill"]["positions"] == 23
@@ -195,13 +254,14 @@ def main():
         for p in sorted((ROOT / "evidence").glob("*.json"))
     }
     (ROOT / "evidence-sha256.json").write_text(json.dumps(manifests, indent=2) + "\n")
+    detailed = json.loads((ROOT / "stage-times.json").read_text())
     print(
         json.dumps(
             {
                 "accounting_verified": True,
                 "comparison_verified": True,
-                "target_body_ms": result["target_body_ms"],
-                "all_kernel_ms": result["all_kernel_ms"],
+                "target_body_ms": detailed["target_body_ms"],
+                "all_kernel_ms": detailed["all_kernel_ms"],
             }
         )
     )
