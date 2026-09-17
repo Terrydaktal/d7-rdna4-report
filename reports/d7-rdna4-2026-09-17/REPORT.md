@@ -94,6 +94,8 @@ aligned decode positions. Each M1/M8 pair uses its own revision's M1. Compiled
 arms ran with Inductor and piecewise GPU graphs; eager arms explicitly disabled
 compilation and graphs.
 
+**Reading paired values:** **first = same token set (any order); second = same ranked order**. `320/320; 320/320` means both checks matched at all 320 tested positions.
+
 | Compared implementations | Top-1 set/order | Top-10 set/order | Top-20 set/order | Full vectors exact |
 | --- | ---: | ---: | ---: | ---: |
 | Original compiled M8 vs original compiled M1 | 315/320; 315/320 | 157/320; 18/320 | 83/320; 1/320 | 0/320 |
@@ -169,6 +171,8 @@ replay durations are excluded from this timing table.** The original and final
 columns below use fresh graph-enabled release profiles.
 
 <div class="wide-table">
+
+**Reading each top-20 pair:** **first = the same 20 tokens, in any order; second = those 20 tokens in exactly the same ranked order**. `320/320; 320/320` means both checks passed at all 320 tested positions. A position passes a stage only when every tested layer instance agrees.
 
 | Compiled stage | Correctness fix? | Old compiled M8 | Final fixed compiled M8 ms | Change ms | Old compiled M8 vs old compiled M1<br>Top-20 set/order | Fix 1 compiled M8 vs Fix 1 compiled M1<br>Top-20 set/order | Fix 1 compiled M8 vs Fix 1 eager M8<br>Top-20 set/order | Final compiled M8 vs final eager M8<br>Top-20 set/order | Timing explanation |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- | --- | --- |

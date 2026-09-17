@@ -1,3 +1,5 @@
+**Reading each top-20 pair:** **first = the same 20 tokens, in any order; second = those 20 tokens in exactly the same ranked order**. `320/320; 320/320` means both checks passed at all 320 tested positions. A position passes a stage only when every tested layer instance agrees.
+
 | Compiled stage | Correctness fix? | Old compiled M8 | Final fixed compiled M8 ms | Change ms | Old compiled M8 vs old compiled M1<br>Top-20 set/order | Fix 1 compiled M8 vs Fix 1 compiled M1<br>Top-20 set/order | Fix 1 compiled M8 vs Fix 1 eager M8<br>Top-20 set/order | Final compiled M8 vs final eager M8<br>Top-20 set/order | Timing explanation |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- | --- | --- |
 | Embedding + first input normalization | Fix 1: normalization; embedding unchanged | 0.004 | 0.008 | +0.004 | 320/320; 320/320 | 320/320; 320/320 | 320/320; 320/320 | 320/320; 320/320 | Preserve the reference normalization rounding; the original embedding/norm fusion is indivisible. |

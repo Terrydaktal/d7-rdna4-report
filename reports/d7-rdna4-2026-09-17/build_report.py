@@ -204,6 +204,10 @@ def main():
         "comparisons"
     ]
     table = [
+        "**Reading paired values:** **first = same token set (any order); "
+        "second = same ranked order**. `320/320; 320/320` means both checks "
+        "matched at all 320 tested positions.",
+        "",
         "| Compared implementations | Top-1 set/order | Top-10 set/order | "
         "Top-20 set/order | Full vectors exact |",
         "| --- | ---: | ---: | ---: | ---: |",

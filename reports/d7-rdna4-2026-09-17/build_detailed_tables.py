@@ -300,6 +300,11 @@ def build(root):
         row["delta_ms"] = row["fixed_ms"] - row["old_ms"]
         rows.append(row)
     table = [
+        "**Reading each top-20 pair:** **first = the same 20 tokens, in any order; "
+        "second = those 20 tokens in exactly the same ranked order**. "
+        "`320/320; 320/320` means both checks passed at all 320 tested positions. "
+        "A position passes a stage only when every tested layer instance agrees.",
+        "",
         (
             "| Compiled stage | Correctness fix? | Old compiled M8 | "
             "Final fixed compiled M8 ms | Change ms | "
