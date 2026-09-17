@@ -1,6 +1,6 @@
 # Restoring M1/M8 Numerical Agreement in RDNA4 Speculative Decoding
 
-**Terrydaktal · 17 September 2026 · Technical report, version 2**
+**Terrydaktal · 17 September 2026 · Technical report, version 3**
 
 ## Abstract
 
@@ -15,10 +15,18 @@ hashes at 10,000 decode positions and 23 initial-prefill predictions. Four
 subsequent performance changes reduced a repaired verification round from
 approximately 76 ms to 60 ms in the measured 60K-input control.
 
+A later eager/compiled investigation isolated intermediate BF16 rounding and
+native RoPE multiplication differences. Aligning both produced identical full
+logit vectors at 320 decode positions and the final prefill prediction, with
+identical captured inputs and outputs at all 465 matched activation boundaries.
+This newer eager/compiled M8 result uses a separate 320-position replay; the
+10K comparison has not been repeated under the new rounding settings.
+
 This report documents an empirical result on a pinned configuration. It does
 not establish arbitrary-input equivalence, equality to an independently
-specified mathematical model, or improved task accuracy. The separate
-eager-versus-compiled reference discrepancy is reported below.
+specified mathematical model, or improved task accuracy. Historical mode
+differences, their diagnosis and the remaining coverage limits are distinguished
+below.
 
 ## 1. Configuration and reference
 
@@ -91,6 +99,14 @@ positions. The original initial-prefill vectors also differ. Original compiled
 M1 versus repaired compiled M1 agrees on top-1 at 319/320 positions and differs
 in every full-vector hash; reference changes are material to this experiment.
 
+A [fresh repaired compiled M1/M8 replay](evidence/fresh-m1-m8-output-320.json)
+also matches every complete output vector and the final prefill vector. Its
+[per-stage activation comparison](compiled-m1-m8-boundaries.md) matches outputs
+at all 466 named boundaries; captured inputs match at 465, with the remaining
+input unobserved. Serial positions are aligned with each M8 group, and physical
+cache capacities are recorded separately in the
+[admission receipt](evidence/compiled-m1-m8-boundaries-320.json).
+
 ### Historical unfixed eager baseline: same 10K corpus
 
 | Prediction | Same token set | Same ordering | Mean shared tokens |
@@ -128,60 +144,28 @@ of 64 layers and the intervening GDN, attention and SiLU markers. The roughly
 25 ms folded-projection total is **the joint MLP gate/up projection across all
 64 layers**, rather than an unexplained collection of unrelated stages.
 
-**“No correctness repair” describes the code change; it does not certify that
-the stage has no numerical differences.** The isolated columns require a
-separate 320-position experiment. A completed end-to-end 320-position match
-cannot be copied into every stage's column. Intermediate tensors are not
-vocabulary logits: their largest 20 coordinates are not the model's top-20
-predictions. The intended isolated measurement holds the stage input and
-initial state at the reference values, substitutes only that stage, and uses
-an identical reference remainder to obtain vocabulary top-20. Direct tensor
-and state equality is recorded separately. Cells without that evidence remain
-explicitly unmeasured. Drafter and unattributed bookkeeping rows do not claim
-target-top-20 equivalence.
+The isolated columns compare **compiled M8 against compiled M1** on 320
+positions. Each stage receives common reference inputs and state; only that
+stage is substituted, then the reference remainder produces vocabulary logits.
+The columns report vocabulary top-20 set/order agreement, not the largest
+coordinates of an intermediate activation. “No correctness repair” describes
+the code change; unmeasured stages remain labeled as such.
 
-The capture prerequisite has now passed: a diagnostic that observes already
-compiled launches (with graph replay disabled for host copies) reproduced the
-graph-enabled release at **320/320 decode positions and the initial prefill
-prediction**, including full-logit digests. It recorded 27,800 operation
-boundaries across 40 eight-position groups. This establishes output agreement
-for the captured sample, not hidden-state or isolated-stage equivalence.
-See [capture output bridges](evidence/compiled-capture-output-bridges.json).
-The first capture prototype altered module boundaries and failed during
-compiler warm-up; it produced no qualifying positions. Its results have not
-been substituted for this successful capture.
+The [compiled capture](evidence/mode-compiled-capture-bridge.json) reproduces
+all 320 release output vectors and the final prefill vector. Every isolated
+reference remainder is checked against those saved outputs before counting a
+result. Graph replay is enabled in the isolated kernel comparisons.
 
-The earlier isolated-head attempt was interrupted by a host OOM-killer event
-before final validation and contributes no qualifying result. After recovering
-the exact archived fixture, a fresh compiled capture reproduced the release at
-all 320 decode positions and the prefill prediction. Its
-[controlled output bridge](evidence/mode-compiled-capture-bridge.json) also checks
-source, capacity and numerical configuration identities.
+The [head](evidence/isolated-head-320.json) and
+[final normalization](evidence/isolated-final-norm-320.json) checks supply the
+completed table cells. In both, full reference logits match at **0/320 old and
+320/320 fixed** positions, despite the head retaining the same top-20 rankings.
+The final-norm cut includes its fused retained-residual addition: the original
+kernel omits an intermediate BF16 rounding of that sum. Its result does not
+stand in for other normalization layers. Input/weight immutability and an
+injected bit error are checked.
 
-The completed [isolated head check](evidence/isolated-head-320.json) uses these
-correct hidden rows, actual original and repaired head implementations, and
-GPU graph replay in every arm. **Both heads preserve top-1 and top-20 set/order
-at 320/320 positions.** Full reference logits match at **0/320 old and 320/320
-fixed** positions: identical rankings in this sample do not imply identical
-scores. Every serial reference head result reproduced its saved in-model
-logits. Input/weight immutability and the injected one-bit fault check passed.
-The completed [isolated final-normalization check](evidence/isolated-final-norm-320.json)
-replays the original generated compiled kernel, including the retained residual
-addition fused into it, on the same correct inputs. With the common serial
-reference head, old M8 preserves top-20 sets at **306/320** positions and their
-ordering at **230/320**; fixed M8 preserves both at **320/320**. Top-1 matches
-at all 320 positions in both arms. Full hidden rows and full logits match at
-**0/320 old and 320/320 fixed** positions. The old fused kernel omits the
-intermediate BF16 rounding of the retained residual sum. The experiment checks
-that expanding this fused input boundary reproduces the reference carry,
-hidden rows and final logits before counting any result. It covers this final
-normalization and its fused residual addition, not every normalization layer.
-
-Other isolated stages remain outstanding; these two measurements are not
-copied into their cells. The controlled eager-versus-compiled output result
-is reported in section 7; its boundary localization remains separate.
-
-| Compiled stage | Correctness fix? | Old M8 ms | Fixed M8 ms | Change ms | Old M8 isolated top-20, set/order | Fixed M8 isolated top-20, set/order | Timing explanation |
+| Compiled stage | Correctness fix? | Old M8 ms | Fixed M8 ms | Change ms | Old compiled M8 vs compiled M1<br>Isolated top-20 set/order | Fixed compiled M8 vs compiled M1<br>Isolated top-20 set/order | Timing explanation |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
 | Embedding + first input normalization | Normalization repair; embedding unchanged | 0.004 | 0.008 | +0.004 | Not yet measured | Not yet measured | Preserve the reference normalization rounding; the original embedding/norm fusion is indivisible. |
 | Layer input residual/normalization | Correctness + performance | 0.180 | 0.357 | +0.177 | Not yet measured | Not yet measured | Preserve reduction and rounding; retain FP32 residual sums in registers. |
@@ -529,7 +513,7 @@ token Pi fixture. They are not results from generating 60,000 tokens.**
 | Repair after first three performance changes | 3 | 2,237 | 26.625 | 60.985 ms | 83.907 tok/s |
 | Final repair, all four performance changes | 3 | 2,295 | 27.270 | 59.891 ms | 84.048 tok/s |
 
-The final row now uses three natural responses, replacing the previous one-response 86.665 tok/s result. Individual final responses produced 743, 848 and 704 tokens at 86.790, 79.240 and 87.529 tok/s. The first and third output digests match the earlier repaired controls. The middle response differs starting at zero-based token offset 671 and has 848 tokens rather than 790. A subsequent run of the same four-change build reproduced all three original digests and lengths (743/790/704); the middle-response variation is intermittent and its cause is not established. The table retains the first complete three-response measurement rather than replacing it with the faster repeat. Consequently this report does **not** claim that all three sampled continuations were preserved by the final change. This does not alter the separate, completed forced-token 10K result. See [brief-speed-controls.json](evidence/brief-speed-controls.json).
+The final control produced 743, 848 and 704 tokens at 86.790, 79.240 and 87.529 tok/s. Its middle response differed from the earlier repaired control starting at token offset 671. A repeat of the same build reproduced the earlier 743/790/704 lengths and all three output digests. The cause of this intermittent continuation difference is unresolved; the table retains the first complete measurement. The separate forced-token 10K agreement does not establish repeatability of these natural completions. See [brief-speed-controls.json](evidence/brief-speed-controls.json).
 
 These direct-engine controls exclude HTTP/Pi, tools, snapshot publication,
 cold prefill and warm-up. Rates pool tokens and time after the first output
@@ -553,7 +537,6 @@ speed**. The head methods also have different numerical guarantees.
 
 The first output chunks are excluded from both the rate numerator and timed
 denominator. See [earlier-60k-output-speed.json](evidence/earlier-60k-output-speed.json).
-No 60K-output throughput claim is made for the final repaired M8.
 
 ## 6. Repairs and upstream ownership
 
@@ -581,179 +564,77 @@ These are submission scopes, not a claim that the pinned adapters apply
 unchanged to current upstream main. The new ports require their own tests.
 Upstream links and submission state are maintained in `submissions.md`.
 
-## 7. Remaining discrepancies and limits
+## 7. Execution-mode diagnosis and remaining limits
 
-**The final optimized build's completed 10K equality result is compiled M1 versus compiled M8.**
-It does not establish eager/compiled equivalence or choose an independently
-proved arithmetic reference. Corrected eager M1 versus corrected compiled M1
-has **98.11% top-1 agreement**
-on the same 10K corpus. Top-10 set/order agreement is 48.45%/7.56%; top-20
-set/order agreement is 22.27%/0.04%. Every full-vector hash differs, including
-all 23 prefills. This separate discrepancy is unresolved and is not evidence
-that either execution is an independently proved mathematical reference.
+The eager/compiled mismatch was localized to intermediate BF16 casts and native
+RoPE multiplication. Aligning both produced exact eager/compiled **M8** output
+agreement on the controlled 320-position Pi replay. This is separate from the
+compiled M1/M8 10K result in section 3; the full 10K eager/compiled comparison
+has not been repeated with the new rounding settings.
 
-The earlier repaired eager pair also agreed internally at all 10,000 decode
-positions. A CPU comparison of its recovered M8 rows against the final compiled
-M8 rows confirms the same cross-run top-1/10/20 figures above: **9,811 top-1,
-4,845/756 top-10 set/order, and 2,227/4 top-20 set/order matches**. All 23 prefill
-full-vector digests already differ; prefill top-1 agrees at 21/23 predictions.
-This localizes an observable difference to no later than the prefill prediction,
-before speculative decode, but not to an individual operator.
+### Controlled M8 results before and after rounding alignment
 
-This is **not a same-build, mode-only test**. The earlier eager runner uses
-`max_num_seqs=1`, while the compiled runner uses `2`; their repair integration
-and performance implementations also differ. No new GPU run was needed for
-this historical comparison. See
-[recovered M8 comparison](evidence/historical-eager-to-compiled-m8.json).
+Each experiment uses the same 60,000-token Pi prefix and 320 saved continuation
+positions. Source, runtime, capacity and numerical settings are checked; the
+receipts explicitly admit the indicated intervention. Every table entry is a
+count out of **320**.
 
-### Current build, controlled eager versus compiled M8: 320 positions
+| Eager versus compiled experiment | Top-1 | Top-10 set | Top-10 order | Top-20 set | Top-20 order | Full logit vectors exact |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| [Baseline, before rounding alignment](evidence/current-compiled-eager-320.json) | 319 | 146 | 14 | 66 | 0 | 0 |
+| [Native SiLU in compiled only](evidence/silu-intervention-vs-eager.json) | 318 | 154 | 21 | 66 | 0 | 0 |
+| [Preserve compiled precision casts only](evidence/precision-casts-vs-eager.json) | 316 | 151 | 22 | 76 | 0 | 0 |
+| [Preserve compiled casts + nearest-even native RoPE in eager](evidence/rotary-common-rounding-320.json) | 320 | 320 | 320 | 320 | 320 | 320 |
 
-A fresh experiment now holds the fixture, repair/performance implementations,
-source identities, numerical settings and cache capacity fixed, including
-`max_num_seqs=2`. Only the execution mode changes. The
-[admission and comparison receipt](evidence/current-compiled-eager-320.json)
-checks those identities before comparing results.
+Only the final row also matches the complete final-prefill vector. Its retained
+scores and inclusive tie sets agree throughout. Both capture observers
+reproduce their uninstrumented controls. The
+[complete before/after boundary table](common-rounding-boundaries.md) records
+exact captured inputs and outputs at all **465 matched boundaries**, across
+320 decode and nine sampled prefill positions, under the
+[declared intervention admission](evidence/common-rounding-admission.json).
 
-| Prediction | Same token set | Same ordering | Mean shared tokens |
-| --- | ---: | ---: | ---: |
-| Top 1 | 319/320 (99.6875%) | 319/320 (99.6875%) | 0.996875 / 1 |
-| Top 10 | 146/320 (45.625%) | 14/320 (4.375%) | 9.328125 / 10 |
-| Top 20 | 66/320 (20.625%) | 0/320 (0%) | 18.6625 / 20 |
+These changes affect the diagnostic configuration, not the release used for
+the timing tables. Correcting native RoPE changes four top-1 predictions versus
+the original eager output ([eager-only comparison](evidence/rotary-whole-model-eager-change.json)).
+Agreement between modes is not evidence of improved task accuracy.
 
-Full-logit digests agree at **0/320** decode positions. The initial-prefill
-full vector also differs: its top-1 agrees, while its top-20 sets share 19/20
-tokens. Thus a difference exists before speculative decode in this controlled
-configuration too. These output measurements alone do not establish which
-execution better matches an independent model.
+### Intermediate BF16 casts
 
-Both instrumented captures now reproduce their respective uninstrumented
-controls exactly, including full decode and prefill logits. The first eager
-attempt exhausted a 24 GiB shared-memory filesystem and is excluded; its evidence
-was encrypted and fully read back before retiring the incomplete tensor files.
-The completed retry used a 40 GiB temporary limit. See the
-[eager capture bridge](evidence/mode-eager-capture-bridge.json).
-
-### First localized mode difference: MLP SiLU/gating
-
-The [prefill](evidence/current-mode-boundaries-prefill.json) and
-[decode](evidence/current-mode-boundaries-decode.json) comparisons align unique
-operation names and logical owners. At the first layer, captured inputs and
-outputs agree through input normalization, GDN projections and gated norm,
-post-GDN normalization, and the MLP gate/up projection. SiLU/gating is the first
-differing operation, before the down projection. Later mismatches can inherit
-this difference; they are not automatically additional independent defects.
-The [complete boundary table](execution-mode-boundaries.md) lists every matched
-logical owner with separate prefill/decode input and output counts.
-
-The [isolated native SiLU replay](evidence/isolated-silu-modes-320.json) exercises
-all 64 layers on the same captured inputs: **20,480 layer-position evaluations**
-for decode and 576 for sampled prefill. Every original compiled and eager kernel
-reproduces its own captured output; input immutability and a one-bit negative
-control pass. No complete SiLU output row agrees between the modes. Across the
-decode evaluations, 96,380,748 of 356,515,840 activation values differ.
-
-The principal arithmetic distinction is the intermediate BF16 rounding:
+Before alignment, the first difference occurred in layer 0's MLP SiLU/gating,
+after identical GDN and gate/up projection outputs. The
+[isolated native replay](evidence/isolated-silu-modes-320.json) tested all 64
+layers on common inputs: 20,480 decode layer-position evaluations and 576
+sampled prefill evaluations. Each kernel reproduced its own captured output;
+none of the complete decode output rows agreed between modes.
 
 ```text
 eager:    BF16(BF16(SiLU(gate)) * up)
 compiled: BF16(SiLU_FP32(gate) * up)
 ```
 
-The explicit BF16-intermediate PyTorch calculation matches eager in all 20,480
-decode evaluations. The independent FP32-intermediate calculation differs from
-the generated compiled kernel in 17 individual values, across 17 evaluations,
-so even matching the intermediate precision does not prove the exact FP32
-arithmetic is identical. These are operator-output comparisons, not vocabulary
-top-20 measurements or accuracy scores.
+The BF16-intermediate arithmetic oracle matched eager in all 20,480 decode
+evaluations. An independent FP32-intermediate calculation still differed from
+the generated compiled kernel at 17 individual values, so that formula alone
+is not a bit-exact specification of the compiled operation.
 
-A [controlled intervention](evidence/silu-intervention-vs-eager.json) enables
-the existing native `silu_and_mul` operation in compiled execution, keeping all
-other recorded settings fixed. This alone does **not** restore end-to-end mode
-equality: top-1 agrees at 318/320, top-10 sets/order at 154/320 and 21/320,
-and top-20 sets/order at 66/320 and 0/320. All full vectors still differ.
-The initial-prefill top-20 set now agrees, although ordering and scores differ.
-This experiment is not a production configuration change or a replacement for
-the report's qualified compiled run.
+Attention sigmoid gating had the same cast-elision distinction: eager rounded
+the sigmoid to BF16 before multiplying; compiled retained it in FP32. A
+[common-input native pilot](evidence/rope-gate-native-pilot.json) reproduced
+each implementation's own output and found 0/8 equal output rows between modes.
+The receipt identifies and supersedes an earlier diagnostic argument-mapping
+error; the gate is compiled argument 1, not the attention-output argument 0.
 
-### Further localized differences: RoPE and attention gating
+`TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1` preserves these intermediate casts.
+The experiment checks the loaded compiler boolean as well as the environment
+setting. Cast preservation alone did not restore equality, as the table shows;
+it exposed the remaining RoPE difference after matching the first three layers.
 
-The SiLU intervention moves the first observed prefill divergence past layers
-0–2 to the first attention layer (layer 3). Its QKV projection and Q/K
-normalization outputs still agree. The first named differing boundary is the
-input to attention's output projection; the
-[prefill boundary receipt](evidence/silu-intervention-prefill-boundaries.json)
-preserves that distinction between inherited and locally produced differences.
+### Native RoPE multiplication
 
-A separate [native pilot](evidence/rope-gate-native-pilot.json) isolates two
-operations on **eight sampled prefix positions**, rather than claiming 320
-positions for this pilot:
-
-| Operation, on common input | Exact output rows | Differing values | Largest absolute difference |
-| --- | ---: | ---: | ---: |
-| RoPE, native eager-compatible versus compiled query rotation | 1/8 | 1,496 | 0.03125 |
-| Attention sigmoid gating, compiled versus eager | 0/8 | 13,524 | 0.00390625 |
-
-The native NeoX-style RoPE calculation reproduces captured eager Q and K in
-all eight positions using the same selected cosine/sine coefficients. Position
-zero is the identity rotation, explaining its match. This isolates rotation
-arithmetic; it does **not** certify the MRoPE coefficient-selection algorithm.
-For gating, each implementation reproduces its own captured output in all eight
-positions, then differs when evaluated on the same attention output and gate.
-Compiled gating retains the sigmoid in FP32 before multiplying, whereas eager
-materializes the sigmoid in BF16. These are numerical-contract differences;
-they do not establish that eager is closer to an independent mathematical
-reference or that each difference causes a user-visible error.
-
-The pilot also corrects an earlier diagnostic argument-mapping error: the gate
-is compiled argument 1, while argument 0 is the attention output. The superseded
-gate-input comparison is identified explicitly in the receipt.
-
-A fresh [compiled M1/M8 control](evidence/fresh-m1-m8-output-320.json) still
-matches all 320 full-vocabulary vectors and the prefill vector. The mode
-differences therefore coexist with the repaired compiled M1/M8 agreement.
-
-The [intermediate compiled M1/M8 comparison](compiled-m1-m8-boundaries.md)
-also matches outputs at **466 named activation boundaries across all 320
-positions**. Captured inputs agree at 465 of those boundaries; the remaining
-boundary has no comparable captured input. Eight serial observations are
-aligned by logical position with each M8 group. Physical KV block size/count
-differ because M1 has no drafter, and both capacities are retained in the
-[admission receipt](evidence/compiled-m1-m8-boundaries-320.json). This supports
-the use of these captured activations as the compiled reference inputs, but
-does not extend the claim to uncaptured recurrent/cache state or supply the
-still-missing isolated old-M8 measurements.
-
-### Compiler precision-cast option: tested, not a complete fix
-
-The installed Inductor exposes `TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1` to
-preserve low-precision intermediate casts that its default compilation can
-eliminate. The experiment records both that environment value and the actual
-loaded `emulate_precision_casts` boolean; the compiler confirms the requested
-setting in both arms. Fresh controls reproduce the original mode-agreement
-counts. The [declared intervention receipt](evidence/precision-casts-vs-eager.json)
-admits only this explicit numerical change, retaining the original receipts.
-
-| Comparison with eager, 320 positions | Top-1 set/order | Top-10 set/order | Top-20 set/order | Full vectors exact |
-| --- | ---: | ---: | ---: | ---: |
-| Default compiled | 319/319 | 146/14 | 66/0 | 0/320 |
-| Compiled with precision-cast emulation | 316/316 | 151/22 | 76/0 | 0/320 |
-
-Each set/order pair gives counts out of 320, not percentages. The initial
-prefill vector also differs in both comparisons. This option alone does not
-establish the same arithmetic contract, and the small ranking changes do not
-establish an accuracy improvement. It is retained as a failed diagnostic
-intervention, not recommended as a production repair. These correctness runs
-do not change the compiled release timings in this report.
-
-### RoPE multiplication: confirmed truncating Triton lowering
-
-New captures reproduce the precision-emulation and eager controls exactly:
-see their [compiled bridge](evidence/precision-casts-capture-bridge.json) and
-[eager bridge](evidence/precision-eager-capture-bridge.json). With precision
-emulation enabled, the first three layers now agree at the observed boundaries.
-The first remaining difference is within layer 3's rotation, after identical
-QKV projections and Q/K normalization. The
-[fine attention comparison](evidence/precision-attention-cut.json) gives:
+With compiler casts preserved, the first remaining discrepancy occurred in
+layer 3 after identical QKV projection and Q/K normalization. The
+[fine attention comparison](evidence/precision-attention-cut.json) found:
 
 | Layer 3 boundary | Exact decode rows / 320 | Exact sampled prefill rows / 9 | Differing decode values |
 | --- | ---: | ---: | ---: |
@@ -767,106 +648,80 @@ QKV projections and Q/K normalization. The
 | Gate input | 320 | 9 | 0 |
 | Gated attention output | 0 | 1 | 1,282,380 |
 
-These are complete activation-row comparisons, not vocabulary top-20 counts.
-The attention and gated-output differences inherit changed rotary inputs and
-state; this table does not identify additional attention-kernel defects.
-
-For the same normalized Q/K and selected BF16 cosine/sine coefficients, the
-[explicit arithmetic oracle](evidence/precision-rotary-formulae.json) reproduces
-each mode exactly at all 320 decode and nine sampled prefill positions:
+The later output differences inherit changed rotary inputs and state; this
+table does not establish separate attention-kernel defects. On the same
+normalized Q/K and selected BF16 cosine/sine coefficients, the
+[explicit arithmetic oracle](evidence/precision-rotary-formulae.json)
+reproduced each mode exactly at all 320 decode and nine sampled prefill positions:
 
 ```text
 native eager:       RNE_BF16(RTZ_BF16(a*c) - RTZ_BF16(b*s))
 compiled emulation: RNE_BF16(RNE_BF16(a*c) - RNE_BF16(b*s))
 ```
 
-The second rotary half uses addition with the same product-rounding rules.
-The 192 non-rotary coordinates are unchanged. `RTZ` means round toward zero;
-`RNE` means round to nearest, ties to even. This formula comparison does not
-independently verify selection of the cosine/sine coefficients.
+The second rotary half uses addition with the same product-rounding rules;
+the 192 non-rotary coordinates are unchanged. `RTZ` means round toward zero;
+`RNE` means round to nearest, ties to even. This isolates rotation arithmetic,
+not the separate selection of cosine/sine coefficients.
 
-The [native replay and narrow intervention](evidence/rotary-rne-native-replay.json)
-then execute the actual native kernel and an isolated copy that makes only
-product rounding explicit. Both use the same captured inputs and coefficients:
+The [native replay](evidence/rotary-rne-native-replay.json) then compared the
+installed kernel with a private copy that changed only product rounding:
 
-| Native RoPE variant | Q and K exact versus eager | Q and K exact versus compiled emulation |
+| Native RoPE variant | Q and K exact versus original eager | Q and K exact versus compiled cast preservation |
 | --- | ---: | ---: |
 | Original native multiplication | 320/320 decode; 9/9 prefill | 0/320 decode; 1/9 prefill |
 | Explicit nearest-even multiplication | 0/320 decode; 1/9 prefill | 320/320 decode; 9/9 prefill |
 
-Both query and key independently meet those counts. All replay outputs also
-match their declared arithmetic oracle; coefficient immutability and injected
-one-bit errors are checked. The receipt binds the native and modified sources
-and the generated LLVM IR, AMD assembly and GPU binary.
+Both Q and K independently meet those counts. Position zero is the identity
+rotation. Input/coefficient immutability and injected one-bit errors are
+checked. Source, LLVM IR, AMD assembly and GPU-binary hashes bind the result
+to the executed implementations; the full-model worker also verifies that the
+modified kernel runs during the request.
 
 The installed **Triton 3.7.1 / PyTorch 2.12.0+rocm7.14** build lowers BF16
 multiplication to `llvm.amdgcn.fdot2.bf16.bf16`, emitted as
-`v_dot2_bf16_bf16` on the R9700. Our observed truncation matches the defect
-already fixed by [Triton PR #11227](https://github.com/triton-lang/triton/pull/11227),
-merged August 14, 2026. That upstream fix removes the special lowering and uses
-an FP32 multiply followed by explicit nearest-even conversion. This report
-credits that existing repair; the new evidence is its occurrence inside our
-captured Qwen RoPE path and its isolation on this R9700 build.
+`v_dot2_bf16_bf16` on the R9700. Its observed truncation is the defect already
+fixed by [Triton PR #11227](https://github.com/triton-lang/triton/pull/11227),
+merged August 14, 2026. That fix replaces the special lowering with an FP32
+multiply and explicit nearest-even conversion. The new evidence here is the
+defect's occurrence and causal isolation inside the captured Qwen RoPE path;
+the upstream repair is credited to its existing authors.
 
-The intervention changes only a diagnostic module. It has **not** replaced the
-installed compiler or the qualified release. It establishes sampled RoPE
-agreement with the precision-emulation path, not with default compiled
-execution, which can omit intermediate BF16 rounding.
+### Historical cross-mode 10K results, before rounding alignment
 
-### End-to-end agreement after both rounding interventions
+The earlier D7-repaired eager M1/M8 pair agreed internally on all 10,000
+positions, as did the final compiled pair. Comparing those eager and compiled
+runs gave the following results for both M1 and M8:
 
-A fresh eager M8 replay applies the isolated nearest-even RoPE multiplication
-before model loading and compares against the saved compiled precision-emulation
-control. The [controlled comparison](evidence/rotary-common-rounding-320.json)
-checks original source/runtime/capacity identities and explicitly accounts for
-the changed eager worker/driver and compiled precision setting. The native
-kernel binding remains unchanged during the replay; its observed invocation
-count grows from 112 during startup to 1,344 after the request.
+| Prediction | Same set | Same order |
+| --- | ---: | ---: |
+| Top-1 | 9,811/10,000 (98.11%) | 9,811/10,000 (98.11%) |
+| Top-10 | 4,845/10,000 (48.45%) | 756/10,000 (7.56%) |
+| Top-20 | 2,227/10,000 (22.27%) | 4/10,000 (0.04%) |
 
-| Output, common rounding contract | Exact token set / 320 | Exact ordering / 320 | Exact retained scores / 320 |
-| --- | ---: | ---: | ---: |
-| Top-1 | 320 | 320 | 320 |
-| Top-10 | 320 | 320 | 320 |
-| Top-20 | 320 | 320 | 320 |
-| Complete 248,320-logit vector | — | — | 320 |
-
-The final prefill prediction also has an exactly equal complete logit vector.
-All 320 predictions consume the same saved continuation following the same
-60,000-token Pi fixture. This is output equivalence over this sample, not a
-new 10K run or a proof over arbitrary inputs or uncaptured state. Agreement
-with the original eager outputs is not expected when correcting its rounding:
-the [eager-only change](evidence/rotary-whole-model-eager-change.json) changes all
-320 full logit vectors and four top-1 choices.
-
-This establishes a sampled common contract for eager and compiled **M8**:
-preserve the intermediate BF16 casts and use nearest-even RoPE products. It
-does not extend the earlier 10K compiled M1/M8 claim to these new settings.
-The performance cost and release qualification of adopting this contract
-remain unmeasured; the existing timing tables retain their original settings.
-
-The [new eager capture bridge](evidence/rotary-rne-capture-bridge.json) reproduces
-all 320 complete output vectors and the prefill vector. The subsequent
-[stage-by-stage comparison](common-rounding-boundaries.md) finds **all 465
-matched boundaries have exactly equal captured inputs and outputs**, across
-all 320 decode and nine sampled prefill positions. The table shows the original
-mode discrepancy alongside the result after aligning rounding, for every
-matched operation and logical owner. Its
-[admission](evidence/common-rounding-admission.json) preserves the two declared
-interventions and the original receipts. Unpaired operations and uncaptured
-KV/GDN/convolution state remain outside that equality claim.
+Every full-vector hash differed, including all 23 prefills; prefill top-1
+agreed at 21/23 positions. These runs predate the rounding alignment above.
+They also differ in repair integration and sequence capacity (`max_num_seqs=1`
+for eager versus `2` for compiled), so they cannot isolate compilation as the
+cause. The [recovered historical comparison](evidence/historical-eager-to-compiled-m8.json)
+preserves that scope. These numbers are historical measurements, not the result
+of the newly aligned configuration.
 
 ### Remaining coverage limits
 
-The final 10K replay covers the all-seven-accepted D7 path. Separate small
-operator tests exercise acceptance boundaries, state/history comparisons,
-graph replay and injected faults, but this report does not claim full-model
-coverage of every rejection width, arbitrary input, long-context range,
-concurrency, snapshot restore or hardware platform. It does not prove that
-model-generated loops are eliminated or measure improved coding accuracy.
-
-Native correctness is tied to source, binary and configuration identities.
-Unsupported changes require requalification. A replay corpus and matching hashes
-cannot establish a universal theorem about all future optimizations.
+- The rounding-aligned eager/compiled result covers 320 M8 decode positions and
+  the final prefill prediction. Full 10K eager/compiled and M1/M8 qualification
+  under these changed settings, plus their performance cost, remain unmeasured.
+- Captured activation equality does not certify uncaptured KV/GDN/convolution
+  state, unpaired operations or independent MRoPE coefficient selection.
+- The original compiled 10K replay covers the all-seven-accepted D7 path. Small
+  operator tests exercise rejection boundaries and injected faults, but full
+  model coverage of every rejection history, long-context range, concurrency,
+  snapshot restore and hardware platform is not established.
+- Neither experiment proves arbitrary-input equivalence to an independent
+  mathematical reference, eliminates model-generated loops or measures improved
+  coding accuracy. Evidence remains tied to its source, binary and configuration
+  identities; changed implementations require qualification.
 
 ## 8. Evidence and reproduction
 

@@ -9,14 +9,17 @@ Terrydaktal · 17 September 2026
 This public repository contains the report, aggregate evidence and review
 materials for the pinned R9700/Radiance M1-versus-M8 investigation. The final
 compiled pair matched all 10,000 decode positions and 23 prefill predictions
-on the reported measures. That is a workload-specific empirical result;
-arbitrary-input equivalence and the separate eager/compiled discrepancy remain
-outside that claim.
+on the reported measures. A later rounding alignment also produced exact
+eager/compiled M8 agreement over 320 positions. The report distinguishes this
+new sample from the historical 10K cross-mode discrepancy; a 10K rerun with
+the new rounding settings and their performance qualification remain pending.
+Neither result proves arbitrary-input equivalence.
 
 [Upstream submissions](reports/d7-rdna4-2026-09-17/submissions.md) ·
 [Compiled stage table](reports/d7-rdna4-2026-09-17/stage-table.md) ·
 [Every layer](reports/d7-rdna4-2026-09-17/layer-table.md) ·
 [Every compiled kernel](reports/d7-rdna4-2026-09-17/kernel-table.md) ·
+[Eager/compiled boundaries before and after alignment](reports/d7-rdna4-2026-09-17/common-rounding-boundaries.md) ·
 [Aggregate evidence](reports/d7-rdna4-2026-09-17/evidence/) ·
 [Optional PDF](reports/d7-rdna4-2026-09-17/report.pdf)
 
@@ -29,8 +32,11 @@ reports/d7-rdna4-2026-09-17/
 ├── evidence-sha256.json          Evidence checksums
 ├── stage-table.md, stage-times.json, kernel-dispatches.csv
 ├── layer-table.md, kernel-table.md
+├── execution-mode-boundaries.md, common-rounding-boundaries.md
+├── compiled-m1-m8-boundaries.md
 ├── historical-eight-round-stage-table.md
 ├── build_report.py, build_detailed_tables.py, analyze_compiled_trace.py
+├── build_execution_mode_tables.py
 ├── build_pdf.py
 ├── probe_upstream_gdn_norm.py
 ├── submissions.md
@@ -43,6 +49,7 @@ reports/d7-rdna4-2026-09-17/
 | --- | --- | --- |
 | `build_report.py` | Aggregate JSON receipts and Markdown template | Verifies aggregate assertions and kernel accounting; rebuilds the report, stage tables, dispatch CSV and evidence checksums. No GPU required. |
 | `build_detailed_tables.py` | Sanitized per-dispatch exports and original aggregate receipts | Checks all recorded dispatch totals, selects paired rounds by inventory completeness, and generates semantic-stage, 64-layer and compiled-kernel tables. Called by `build_report.py`. |
+| `build_execution_mode_tables.py` | Authenticated activation-boundary comparison receipts | Builds the complete eager/compiled before/after and compiled M1/M8 boundary tables. Called by `build_report.py`. |
 | `analyze_compiled_trace.py` | Private profiler traces and their pinned original aggregate receipts | Validates graph replays, kernel/layer attribution and trace identity; exports only timings, symbols, layer IDs and round IDs. Original private traces are not published. This preparation step has already produced the checked-in exports. |
 | `build_pdf.py` | `REPORT.md` | Optional HTML/PDF rendering, with dependencies pinned in the script. |
 | `probe_upstream_gdn_norm.py` | Compatible pinned ROCm/Triton/vLLM environment | Native synthetic gated-normalization comparison and JSON metrics; requires a GPU. |

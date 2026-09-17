@@ -339,18 +339,13 @@ def main():
         )
     replacements["{{SPEED_TABLE}}"] = "\n".join(speed_table)
     replacements["{{SPEED_SUMMARY}}"] = (
-        "The final row now uses three natural responses, replacing the previous one-response "
-        "86.665 tok/s result. Individual final responses produced 743, 848 and 704 tokens "
-        "at 86.790, 79.240 and 87.529 tok/s. The first and third output digests match the "
-        "earlier repaired controls. The middle response differs starting at zero-based token "
-        "offset 671 and has 848 tokens rather than 790. A subsequent run of the same "
-        "four-change build reproduced all three original digests and lengths "
-        "(743/790/704); the middle-response variation is intermittent and its cause "
-        "is not established. The table retains the first complete three-response "
-        "measurement rather than replacing it with the faster repeat. "
-        "Consequently this report does **not** claim that all three sampled continuations "
-        "were preserved by the final change. This does not alter the separate, completed "
-        "forced-token 10K result. See "
+        "The final control produced 743, 848 and 704 tokens at 86.790, 79.240 and "
+        "87.529 tok/s. Its middle response differed from the earlier repaired control "
+        "starting at token offset 671. A repeat of the same build reproduced the "
+        "earlier 743/790/704 lengths and all three output digests. The cause of this "
+        "intermittent continuation difference is unresolved; the table retains the "
+        "first complete measurement. The separate forced-token 10K agreement does "
+        "not establish repeatability of these natural completions. See "
         "[brief-speed-controls.json](evidence/brief-speed-controls.json)."
     )
     template = ROOT / "report.template.md"

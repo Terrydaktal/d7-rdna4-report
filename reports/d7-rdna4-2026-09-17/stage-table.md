@@ -1,4 +1,4 @@
-| Compiled stage | Correctness fix? | Old M8 ms | Fixed M8 ms | Change ms | Old M8 isolated top-20, set/order | Fixed M8 isolated top-20, set/order | Timing explanation |
+| Compiled stage | Correctness fix? | Old M8 ms | Fixed M8 ms | Change ms | Old compiled M8 vs compiled M1<br>Isolated top-20 set/order | Fixed compiled M8 vs compiled M1<br>Isolated top-20 set/order | Timing explanation |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
 | Embedding + first input normalization | Normalization repair; embedding unchanged | 0.004 | 0.008 | +0.004 | Not yet measured | Not yet measured | Preserve the reference normalization rounding; the original embedding/norm fusion is indivisible. |
 | Layer input residual/normalization | Correctness + performance | 0.180 | 0.357 | +0.177 | Not yet measured | Not yet measured | Preserve reduction and rounding; retain FP32 residual sums in registers. |

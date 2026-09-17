@@ -277,8 +277,8 @@ def build(root):
     table = [
         (
             "| Compiled stage | Correctness fix? | Old M8 ms | Fixed M8 ms | Change"
-            " ms | Old M8 isolated top-20, set/order | Fixed M8 isolated top-20, "
-            "set/order | Timing explanation |"
+            " ms | Old compiled M8 vs compiled M1<br>Isolated top-20 set/order | "
+            "Fixed compiled M8 vs compiled M1<br>Isolated top-20 set/order | Timing explanation |"
         ),
         "| --- | --- | ---: | ---: | ---: | --- | --- | --- |",
     ]
