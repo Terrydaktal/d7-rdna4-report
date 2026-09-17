@@ -1,6 +1,6 @@
 # Restoring M1/M8 Numerical Agreement in RDNA4 Speculative Decoding
 
-**Terrydaktal · 17 September 2026 · Technical report, version 3**
+**Terrydaktal · 17 September 2026 · Technical report, version 4**
 
 ## Abstract
 
@@ -521,6 +521,32 @@ chunk; round latency is the median of the per-response steady-round medians.
 Throughput also depends on speculative acceptance, so it is not a pure kernel
 speed ratio. Clean timing passes do not record GPU profiles or copy activations.
 
+### Cost of preserving compiled BF16 rounding
+
+Four fresh compiled runs used **before–after–after–before order**, with three
+natural responses per run on the same 60,000-token Pi prefix. Both settings use
+the final four performance repairs, full BF16 target head and piecewise GPU
+graphs. The only changed compiler setting is
+`TORCHINDUCTOR_EMULATE_PRECISION_CASTS=0/1`.
+The stage profiles in §4 and the preceding engine controls predate this
+rounding alignment.
+
+| Compiled setting | Natural responses | Output tokens | Median round | Committed tokens/round | Pooled post-first rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Before rounding alignment | 6 | 4,474 | 60.906 ms | 5.288 | 84.123 tok/s |
+| BF16 intermediate casts preserved | 6 | 5,050 | 60.900 ms | 5.211 | 83.070 tok/s |
+
+Preserving casts changed the median round by **-0.006 ms (-0.01%)** and the pooled token rate by **-1.25%**. Mean committed tokens per round changed by -1.45%. The per-response median rounds ranged from 60.245 to 61.415 ms before and 60.567 to 61.194 ms after.
+
+Round time is effectively unchanged in this sample. The slightly lower token
+rate is consistent with fewer committed tokens per round. Every run used the
+same sampling settings and three seeds, but changed rounding produced different
+natural continuations. The nearest-even native RoPE correction applies to the
+**eager reference**; this measures the compiled half of the alignment. Startup,
+compilation, warm-up and cold prefill are excluded from the decode timings.
+All twelve natural completions are included; per-round timings and source
+identities are retained in [rounding-speed-abba.json](evidence/rounding-speed-abba.json).
+
 ### Separate, earlier 60K-generated-token verify-head experiment
 
 This earlier compiled experiment used 115 natural responses per method across
@@ -711,7 +737,8 @@ of the newly aligned configuration.
 
 - The rounding-aligned eager/compiled result covers 320 M8 decode positions and
   the final prefill prediction. Full 10K eager/compiled and M1/M8 qualification
-  under these changed settings, plus their performance cost, remain unmeasured.
+  under these changed settings remains outstanding. The brief compiled speed
+  comparison is reported in §5; eager execution speed has not been measured.
 - Captured activation equality does not certify uncaptured KV/GDN/convolution
   state, unpaired operations or independent MRoPE coefficient selection.
 - The original compiled 10K replay covers the all-seven-accepted D7 path. Small

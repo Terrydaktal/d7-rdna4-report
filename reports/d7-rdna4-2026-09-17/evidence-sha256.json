@@ -41,6 +41,7 @@
   "evidence/rotary-rne-capture-bridge.json": "21b59665fc603c028a5dffbc6d6570ccd60ecf5927c36a51b863ee0601d57c3b",
   "evidence/rotary-rne-native-replay.json": "c652ed570bb94914edf867c27b2daf676befe9cd0df83d4034b89b8fc878dc2e",
   "evidence/rotary-whole-model-eager-change.json": "56edc33b50159599b77c91349d5d842980c7db960d0ab440df2cb8cbd5fb727a",
+  "evidence/rounding-speed-abba.json": "747f9989c3ba17347695eb8f8729f234466294dd9c485d1e31548b0cdd808749",
   "evidence/silu-intervention-prefill-boundaries.json": "6f0fba201cf9ae0fce248d67589306b5e13ff03c3f3c7202b42a3111439ce363",
   "evidence/silu-intervention-vs-eager.json": "cb3847bd33a5cf3af1905d37da7ee2dc463a7746f22b9a148dae332f2a078c11",
   "evidence/upstream-norm-probe.json": "801be1742c69bc551250eaffbbc8752a7222a5ebefd3a5e77855e7f02a237b14"

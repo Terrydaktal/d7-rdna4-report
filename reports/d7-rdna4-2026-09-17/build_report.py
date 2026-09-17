@@ -82,6 +82,67 @@ FIXES = {
 }
 
 
+def rounding_speed_tables():
+    from build_detailed_tables import authenticated_read
+
+    data = authenticated_read(ROOT / "evidence/rounding-speed-abba.json")
+    assert data["status"] == "MEASURED" and data["prefix_tokens"] == 60000
+    assert data["order"] == [0, 1, 1, 0]
+    assert [c["precision_casts"] for c in data["controls"]] == data["order"]
+    assert data["execution"]["compiled"] and data["execution"]["graph_mode"] == "PIECEWISE"
+    assert all(data["checks"].values())
+    table = [
+        "| Compiled setting | Natural responses | Output tokens | Median round | "
+        "Committed tokens/round | Pooled post-first rate |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for casts, name, label in (
+        (0, "before", "Before rounding alignment"),
+        (1, "aligned", "BF16 intermediate casts preserved"),
+    ):
+        passes = [
+            p for c in data["controls"] if c["precision_casts"] == casts for p in c["passes"]
+        ]
+        row = data["arms"][name]
+        assert len(passes) == row["responses"] == 6
+        assert all(p["finish_reason"] == "stop" for p in passes)
+        assert row["output_tokens"] == sum(p["output_tokens"] for p in passes)
+        for p in passes:
+            steps = p["steps_after_first"]
+            assert sum(s["tokens"] for s in steps) == p["after_first_tokens"]
+            assert math.isclose(
+                p["steady_median_step_ms"],
+                1000 * statistics.median(s["seconds"] for s in steps[8:]),
+            )
+        for key, expected in {
+            "tokens_per_second": sum(p["after_first_tokens"] for p in passes)
+            / sum(p["after_first_seconds"] for p in passes),
+            "median_round_ms": statistics.median(p["steady_median_step_ms"] for p in passes),
+            "mean_tokens_per_round": statistics.mean(p["steady_tokens_per_step"] for p in passes),
+        }.items():
+            assert math.isclose(row[key], expected)
+        table.append(
+            f"| {label} | 6 | {row['output_tokens']:,} | {row['median_round_ms']:.3f} ms | "
+            f"{row['mean_tokens_per_round']:.3f} | {row['tokens_per_second']:.3f} tok/s |"
+        )
+    before, after = data["arms"]["before"], data["arms"]["aligned"]
+    changes = data["percent_change"]
+    for key, change in changes.items():
+        assert math.isclose(change, 100 * (after[key] / before[key] - 1))
+    summary = (
+        "Preserving casts changed the median round by "
+        f"**{after['median_round_ms'] - before['median_round_ms']:+.3f} ms "
+        f"({changes['median_round_ms']:+.2f}%)** and the pooled token rate by "
+        f"**{changes['tokens_per_second']:+.2f}%**. Mean committed tokens per round "
+        f"changed by {changes['mean_tokens_per_round']:+.2f}%. The per-response median "
+        f"rounds ranged from {before['round_ms_range'][0]:.3f} to "
+        f"{before['round_ms_range'][1]:.3f} ms before and "
+        f"{after['round_ms_range'][0]:.3f} to {after['round_ms_range'][1]:.3f} ms after."
+    )
+    (ROOT / "rounding-speed-table.md").write_text("\n".join(table) + "\n")
+    return {"{{ROUNDING_SPEED_TABLE}}": "\n".join(table), "{{ROUNDING_SPEED_SUMMARY}}": summary}
+
+
 def main():
     from build_detailed_tables import authenticated_read
     from build_execution_mode_tables import build as build_mode_tables
@@ -348,6 +409,7 @@ def main():
         "not establish repeatability of these natural completions. See "
         "[brief-speed-controls.json](evidence/brief-speed-controls.json)."
     )
+    replacements.update(rounding_speed_tables())
     template = ROOT / "report.template.md"
     document = template.read_text()
     for marker, replacement in replacements.items():
