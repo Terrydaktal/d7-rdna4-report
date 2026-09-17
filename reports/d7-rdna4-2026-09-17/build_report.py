@@ -87,7 +87,10 @@ def main():
     from build_execution_mode_tables import build as build_mode_tables
 
     modes = authenticated_read(ROOT / "evidence/current-compiled-eager-320.json")
-    assert modes["decode"]["positions"] == 320 and modes["decode"]["full_logits_exact"] == 0
+    assert (
+        modes["decode"]["positions"] == 320
+        and modes["decode"]["full_logits_exact"] == 0
+    )
     assert [
         (modes["decode"][k]["set_exact"], modes["decode"][k]["ranked_exact"])
         for k in ("1", "10", "20")
@@ -96,19 +99,31 @@ def main():
     assert silu["status"] == "SAMPLE_CHECKED" and silu["negative_control_detected"]
     assert silu["inputs_unchanged"]
     decoded = list(silu["results"]["decode"].values())
-    assert len(decoded) == 64 and all(row["own_capture_reproduced"] == 320 for row in decoded)
+    assert len(decoded) == 64 and all(
+        row["own_capture_reproduced"] == 320 for row in decoded
+    )
     assert (
-        sum(row["compiled_vs_eager_on_common_input"]["different_elements"] for row in decoded)
+        sum(
+            row["compiled_vs_eager_on_common_input"]["different_elements"]
+            for row in decoded
+        )
         == 96380748
     )
-    assert sum(row["torch_native_vs_eager"]["exact_positions"] for row in decoded) == 20480
-    assert sum(row["torch_fp32_vs_compiled"]["exact_positions"] for row in decoded) == 20463
+    assert (
+        sum(row["torch_native_vs_eager"]["exact_positions"] for row in decoded) == 20480
+    )
+    assert (
+        sum(row["torch_fp32_vs_compiled"]["exact_positions"] for row in decoded)
+        == 20463
+    )
     pilot = authenticated_read(ROOT / "evidence/rope-gate-native-pilot.json")
     assert pilot["positions"] == 8 and pilot["gate"]["gate_input_exact"]
     assert pilot["rope"]["True"]["eager_q"]["exact_positions"] == 8
     assert pilot["rope"]["True"]["eager_k"]["exact_positions"] == 8
     assert pilot["rope"]["True"]["compiled_q"]["different_elements"] == 1496
-    assert pilot["gate"]["common_input_compiled_vs_eager"]["different_elements"] == 13524
+    assert (
+        pilot["gate"]["common_input_compiled_vs_eager"]["different_elements"] == 13524
+    )
     assert pilot["gate"]["compiled_reproduces_own_output"]["exact_positions"] == 8
     assert pilot["gate"]["eager_reproduces_own_output"]["exact_positions"] == 8
     precision = authenticated_read(ROOT / "evidence/precision-casts-vs-eager.json")
@@ -118,6 +133,72 @@ def main():
         (precision["decode"][k]["set_exact"], precision["decode"][k]["ranked_exact"])
         for k in ("1", "10", "20")
     ] == [(316, 316), (151, 22), (76, 0)]
+    cut = authenticated_read(ROOT / "evidence/precision-attention-cut.json")
+    formulas = authenticated_read(ROOT / "evidence/precision-rotary-formulae.json")
+    rotary = authenticated_read(ROOT / "evidence/rotary-rne-native-replay.json")
+    assert rotary["status"] == "SAMPLE_CHECKED"
+    assert rotary["negative_controls_detected"] and rotary["coefficients_unchanged"]
+    assert rotary["versions"] == {
+        "gpu": "AMD Radeon AI PRO R9700",
+        "torch": "2.12.0+rocm7.14",
+        "triton": "3.7.1",
+    }
+    for phase, count in (("decode", 320), ("prefill", 9)):
+        for name in (
+            "qkv_projection",
+            "query_after_normalization",
+            "key_after_normalization",
+            "value",
+            "gate_input",
+        ):
+            assert cut["results"][phase][name]["exact_positions"] == count
+        for kind in ("query", "key"):
+            for rounding, side in (("rtz", "left"), ("rne", "right")):
+                entry = formulas["rotary_formulae"][phase][
+                    f"{kind}/{rounding}_products/{side}"
+                ]
+                assert entry["positions"] == entry["exact_positions"] == count
+                assert entry["different_elements"] == 0
+            for variant, side in (
+                ("native", "eager"),
+                ("rne_products", "compiled_casts"),
+            ):
+                entry = rotary["results"][phase][f"{variant}/{kind}/{side}"]
+                assert entry["positions"] == entry["exact_positions"] == count
+                assert entry["different_elements"] == 0
+            for variant, side in (
+                ("native", "compiled_casts"),
+                ("rne_products", "eager"),
+            ):
+                entry = rotary["results"][phase][f"{variant}/{kind}/{side}"]
+                assert entry["positions"] == count
+                assert entry["exact_positions"] == (0 if phase == "decode" else 1)
+    for name, different in {
+        "query_after_rotation": 184437,
+        "key_after_rotation": 30984,
+        "attention_output": 1335594,
+        "gated_attention_output": 1282380,
+    }.items():
+        assert cut["results"]["decode"][name]["different_elements"] == different
+    common = authenticated_read(ROOT / "evidence/rotary-common-rounding-320.json")
+    eager_change = authenticated_read(
+        ROOT / "evidence/rotary-whole-model-eager-change.json"
+    )
+    assert common["status"] == "COMPARED_TWO_DECLARED_INTERVENTIONS"
+    assert common["observed_rotary"]["calls"] == 1344
+    assert common["binding"]["isolated_native_evidence"] == rotary["sha256"]
+    assert eager_change["decode"]["1"]["set_exact"] == 316
+    assert eager_change["decode"]["full_logits_exact"] == 0
+    for phase, count in (("decode", 320), ("prefill", 1)):
+        assert common[phase]["positions"] == common[phase]["full_logits_exact"] == count
+        for k in ("1", "10", "20"):
+            for field in (
+                "set_exact",
+                "ranked_exact",
+                "retained_scores_exact",
+                "inclusive_tie_set_exact",
+            ):
+                assert common[phase][k][field] == count
     build_mode_tables(ROOT)
     profiles = {arm: read(f"{arm}-compiled-profile.json") for arm in ("old", "fixed")}
     groups = {}
@@ -127,7 +208,11 @@ def main():
         divisor = 1000 * profile["profile_steps"]
         assert profile["profile_steps"] == 8
         for item in profile["attribution"]["kernel_groups"]:
-            group = category(item["kernel"]) if item["stage"] == "target_body" else item["stage"]
+            group = (
+                category(item["kernel"])
+                if item["stage"] == "target_body"
+                else item["stage"]
+            )
             ms = item["kernel_us"] / divisor
             by_group[group] += ms
             dispatches.append(
@@ -203,10 +288,14 @@ def main():
             "Included in fused group" if row[k] is None else f"{row[k]:.3f}"
             for k in ("old_ms", "fixed_ms")
         ]
-        table.append(f"| {row['stage']} | {values[0]} | {values[1]} | {row['repair']} |")
+        table.append(
+            f"| {row['stage']} | {values[0]} | {values[1]} | {row['repair']} |"
+        )
     (ROOT / "stage-table.md").write_text("\n".join(table) + "\n")
     with (ROOT / "kernel-dispatches.csv").open("w") as out:
-        writer = csv.DictWriter(out, fieldnames=list(dispatches[0]), lineterminator="\n")
+        writer = csv.DictWriter(
+            out, fieldnames=list(dispatches[0]), lineterminator="\n"
+        )
         writer.writeheader()
         writer.writerows(dispatches)
     # Retain the original eight-round aggregation, then build the finer table
@@ -236,7 +325,8 @@ def main():
         assert [p["index"] for p in passes] == [1, 2, 3]
         assert row["output_tokens"] == sum(p["output_tokens"] for p in passes)
         assert math.isclose(
-            row["median_round_ms"], statistics.median(p["steady_median_step_ms"] for p in passes)
+            row["median_round_ms"],
+            statistics.median(p["steady_median_step_ms"] for p in passes),
         )
         assert math.isclose(
             row["post_first_tps"],

@@ -466,6 +466,118 @@ establish an accuracy improvement. It is retained as a failed diagnostic
 intervention, not recommended as a production repair. These correctness runs
 do not change the compiled release timings in this report.
 
+### RoPE multiplication: confirmed truncating Triton lowering
+
+New captures reproduce the precision-emulation and eager controls exactly:
+see their [compiled bridge](evidence/precision-casts-capture-bridge.json) and
+[eager bridge](evidence/precision-eager-capture-bridge.json). With precision
+emulation enabled, the first three layers now agree at the observed boundaries.
+The first remaining difference is within layer 3's rotation, after identical
+QKV projections and Q/K normalization. The
+[fine attention comparison](evidence/precision-attention-cut.json) gives:
+
+| Layer 3 boundary | Exact decode rows / 320 | Exact sampled prefill rows / 9 | Differing decode values |
+| --- | ---: | ---: | ---: |
+| QKV projection | 320 | 9 | 0 |
+| Query normalization | 320 | 9 | 0 |
+| Key normalization | 320 | 9 | 0 |
+| Query after RoPE | 0 | 1 | 184,437 |
+| Key after RoPE | 0 | 1 | 30,984 |
+| Value input | 320 | 9 | 0 |
+| Attention output | 0 | 1 | 1,335,594 |
+| Gate input | 320 | 9 | 0 |
+| Gated attention output | 0 | 1 | 1,282,380 |
+
+These are complete activation-row comparisons, not vocabulary top-20 counts.
+The attention and gated-output differences inherit changed rotary inputs and
+state; this table does not identify additional attention-kernel defects.
+
+For the same normalized Q/K and selected BF16 cosine/sine coefficients, the
+[explicit arithmetic oracle](evidence/precision-rotary-formulae.json) reproduces
+each mode exactly at all 320 decode and nine sampled prefill positions:
+
+```text
+native eager:       RNE_BF16(RTZ_BF16(a*c) - RTZ_BF16(b*s))
+compiled emulation: RNE_BF16(RNE_BF16(a*c) - RNE_BF16(b*s))
+```
+
+The second rotary half uses addition with the same product-rounding rules.
+The 192 non-rotary coordinates are unchanged. `RTZ` means round toward zero;
+`RNE` means round to nearest, ties to even. This formula comparison does not
+independently verify selection of the cosine/sine coefficients.
+
+The [native replay and narrow intervention](evidence/rotary-rne-native-replay.json)
+then execute the actual native kernel and an isolated copy that makes only
+product rounding explicit. Both use the same captured inputs and coefficients:
+
+| Native RoPE variant | Q and K exact versus eager | Q and K exact versus compiled emulation |
+| --- | ---: | ---: |
+| Original native multiplication | 320/320 decode; 9/9 prefill | 0/320 decode; 1/9 prefill |
+| Explicit nearest-even multiplication | 0/320 decode; 1/9 prefill | 320/320 decode; 9/9 prefill |
+
+Both query and key independently meet those counts. All replay outputs also
+match their declared arithmetic oracle; coefficient immutability and injected
+one-bit errors are checked. The receipt binds the native and modified sources
+and the generated LLVM IR, AMD assembly and GPU binary.
+
+The installed **Triton 3.7.1 / PyTorch 2.12.0+rocm7.14** build lowers BF16
+multiplication to `llvm.amdgcn.fdot2.bf16.bf16`, emitted as
+`v_dot2_bf16_bf16` on the R9700. Our observed truncation matches the defect
+already fixed by [Triton PR #11227](https://github.com/triton-lang/triton/pull/11227),
+merged August 14, 2026. That upstream fix removes the special lowering and uses
+an FP32 multiply followed by explicit nearest-even conversion. This report
+credits that existing repair; the new evidence is its occurrence inside our
+captured Qwen RoPE path and its isolation on this R9700 build.
+
+The intervention changes only a diagnostic module. It has **not** replaced the
+installed compiler or the qualified release. It establishes sampled RoPE
+agreement with the precision-emulation path, not with default compiled
+execution, which can omit intermediate BF16 rounding.
+
+### End-to-end agreement after both rounding interventions
+
+A fresh eager M8 replay applies the isolated nearest-even RoPE multiplication
+before model loading and compares against the saved compiled precision-emulation
+control. The [controlled comparison](evidence/rotary-common-rounding-320.json)
+checks original source/runtime/capacity identities and explicitly accounts for
+the changed eager worker/driver and compiled precision setting. The native
+kernel binding remains unchanged during the replay; its observed invocation
+count grows from 112 during startup to 1,344 after the request.
+
+| Output, common rounding contract | Exact token set / 320 | Exact ordering / 320 | Exact retained scores / 320 |
+| --- | ---: | ---: | ---: |
+| Top-1 | 320 | 320 | 320 |
+| Top-10 | 320 | 320 | 320 |
+| Top-20 | 320 | 320 | 320 |
+| Complete 248,320-logit vector | — | — | 320 |
+
+The final prefill prediction also has an exactly equal complete logit vector.
+All 320 predictions consume the same saved continuation following the same
+60,000-token Pi fixture. This is output equivalence over this sample, not a
+new 10K run or a proof over arbitrary inputs or uncaptured state. Agreement
+with the original eager outputs is not expected when correcting its rounding:
+the [eager-only change](evidence/rotary-whole-model-eager-change.json) changes all
+320 full logit vectors and four top-1 choices.
+
+This establishes a sampled common contract for eager and compiled **M8**:
+preserve the intermediate BF16 casts and use nearest-even RoPE products. It
+does not extend the earlier 10K compiled M1/M8 claim to these new settings.
+The performance cost and release qualification of adopting this contract
+remain unmeasured; the existing timing tables retain their original settings.
+
+The [new eager capture bridge](evidence/rotary-rne-capture-bridge.json) reproduces
+all 320 complete output vectors and the prefill vector. The subsequent
+[stage-by-stage comparison](common-rounding-boundaries.md) finds **all 465
+matched boundaries have exactly equal captured inputs and outputs**, across
+all 320 decode and nine sampled prefill positions. The table shows the original
+mode discrepancy alongside the result after aligning rounding, for every
+matched operation and logical owner. Its
+[admission](evidence/common-rounding-admission.json) preserves the two declared
+interventions and the original receipts. Unpaired operations and uncaptured
+KV/GDN/convolution state remain outside that equality claim.
+
+### Remaining coverage limits
+
 The final 10K replay covers the all-seven-accepted D7 path. Separate small
 operator tests exercise acceptance boundaries, state/history comparisons,
 graph replay and injected faults, but this report does not claim full-model
